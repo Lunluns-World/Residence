@@ -66,7 +66,8 @@ public class auto implements cmd {
             }
         }
 
-        Residence.getInstance().getPlayerManager().getResidencePlayer(player).forceUpdateGroup();
+        ResidencePlayer rPlayer = plugin.getPlayerManager().getResidencePlayer(player);
+        rPlayer.forceUpdateGroup();
 
         Location loc = player.getLocation();
 
@@ -87,10 +88,11 @@ public class auto implements cmd {
 
         failReason result = failReason.area;
 
+        boolean checkBalance = create.shouldCharge(plugin, rPlayer, resadmin);
         if (plugin.getConfigManager().isARCOldMethod())
-            result = resize(player, cuboid, true, length);
+            result = resize(player, cuboid, checkBalance, length);
         else
-            result = optimizedResize(player, cuboid, true, length);
+            result = optimizedResize(player, cuboid, checkBalance, length);
 
         if (!result.equals(failReason.none)) {
             return true;
@@ -344,7 +346,7 @@ public class auto implements cmd {
             if (checkBalance && plugin.getConfigManager().enableEconomy()) {
                 cost = c.getCost(group);
 
-                if (!Residence.getInstance().getEconomyManager().canAfford(player, cost)) {
+                if (cost > 0 && !plugin.getEconomyManager().canAfford(player, cost)) {
                     lm.Economy_NotEnoughMoney.sendMessage(player);
                     return failReason.money;
                 }
@@ -713,9 +715,12 @@ public class auto implements cmd {
                 continue;
             }
 
-            if (checkBalance && plugin.getConfigManager().enableEconomy() && !Residence.getInstance().getEconomyManager().canAfford(player, c.getCost(group))) {
-                lm.Economy_NotEnoughMoneyAmount.sendMessage(player, Residence.getInstance().getEconomyManager().format(c.getCost(group)));
-                return failReason.money;
+            if (checkBalance && plugin.getConfigManager().enableEconomy()) {
+                double cost = c.getCost(group);
+                if (cost > 0 && !plugin.getEconomyManager().canAfford(player, cost)) {
+                    lm.Economy_NotEnoughMoneyAmount.sendMessage(player, plugin.getEconomyManager().format(cost));
+                    return failReason.money;
+                }
             }
 
             cuboid.setLowLocation(c.getLowLocation());

@@ -47,13 +47,15 @@ public class create implements cmd {
 
         Residence.getInstance().getPlayerManager().getResidencePlayer(player).forceUpdateGroup();
 
-        ResidencePlayer rp = ResidencePlayer.get(player);
-
-        boolean deductmoney = !plugin.getConfigManager().isNewPlayerCommandFree() || rp.getData().ownedResidence();
-
-        plugin.getResidenceManager().addResidence(player, args[0], resadmin, deductmoney);
+        boolean charge = shouldCharge(plugin, ResidencePlayer.get(player), resadmin);
+        plugin.getResidenceManager().addResidence(player, args[0], resadmin, charge);
 
         return true;
+    }
+
+    static boolean shouldCharge(Residence plugin, ResidencePlayer player, boolean resadmin) {
+        return !resadmin && plugin.getConfigManager().isChargeOnCreation() && plugin.getConfigManager().enableEconomy()
+                && (!plugin.getConfigManager().isNewPlayerCommandFree() || player.getData().ownedResidence());
     }
 
     @Override
