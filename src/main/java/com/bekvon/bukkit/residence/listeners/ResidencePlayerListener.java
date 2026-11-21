@@ -1767,6 +1767,11 @@ public class ResidencePlayerListener implements Listener {
         return Bukkit.getWorlds().get(0).getSpawnLocation();
     }
 
+    private boolean canFlyWithAnotherPlugin(Player player) {
+        return (Bukkit.getPluginManager().isPluginEnabled("CMI") && player.hasPermission("cmi.command.fly"))
+                || (Bukkit.getPluginManager().isPluginEnabled("Essentials") && player.hasPermission("essentials.fly"));
+    }
+
     private void fly(Player player, boolean state, ClaimedResidence oldRes) {
         fly(player, state, oldRes, true);
     }
@@ -1776,13 +1781,13 @@ public class ResidencePlayerListener implements Listener {
         player.setMetadata(ResidenceFlyState, new FixedMetadataValue(plugin, flyState));
         if (player.getGameMode() != GameMode.SURVIVAL && player.getGameMode() != GameMode.ADVENTURE && checkGameMode)
             return;
-        if (ResPerm.bypass_fly.hasPermission(player, 10000L))
+        if (ResPerm.bypass_fly.hasSetPermission(player))
             return;
         if (!state) {
 
             // Lets not disable fly mode if player has access to fly command from another
             // plugin
-            if (player.hasPermission("cmi.command.fly") || player.hasPermission("essentials.fly"))
+            if (canFlyWithAnotherPlugin(player))
                 return;
             boolean land = player.isFlying();
 
@@ -1805,7 +1810,7 @@ public class ResidencePlayerListener implements Listener {
                 ClaimedResidence res = plugin.getResidenceManager().getByLoc(player.getLocation());
 
                 if (res == null || !res.getPermissions().playerHas(player, Flags.fly, FlagCombo.OnlyTrue) && player.isOnline()) {
-                    if (player.hasPermission("cmi.command.fly") || player.hasPermission("essentials.fly"))
+                    if (canFlyWithAnotherPlugin(player))
                         return;
 
                     player.setFlying(false);
