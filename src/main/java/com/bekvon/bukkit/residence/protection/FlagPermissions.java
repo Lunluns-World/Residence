@@ -1104,10 +1104,23 @@ public class FlagPermissions {
         return getPossibleFlags(player, residence, resadmin);
     }
 
+    public static boolean isFlagPermissionDenied(CommandSender sender, String flag) {
+        if (!(sender instanceof Player))
+            return false;
+
+        String permission = ResPerm.flag_$1.getPermission(flag);
+        if (sender.isPermissionSet(permission))
+            return !sender.hasPermission(permission);
+
+        String wildcard = ResPerm.flag_$1.getPermission("*");
+        return sender.isPermissionSet(wildcard) && !sender.hasPermission(wildcard);
+    }
+
     public List<String> getPossibleFlags(Player player, boolean residence, boolean resadmin) {
         Set<String> flags = new HashSet<String>();
         for (Entry<String, Boolean> one : Residence.getInstance().getPermissionManager().getAllFlags().getFlags().entrySet()) {
-            if (!one.getValue() && !resadmin && !ResPerm.flag_$1.hasSetPermission(player, one.getKey().toLowerCase()))
+            if (!resadmin && (isFlagPermissionDenied(player, one.getKey())
+                    || (!one.getValue() && !ResPerm.flag_$1.hasSetPermission(player, one.getKey()))))
                 continue;
 
             if (!residence && !getAllPossibleFlags().contains(one.getKey()))

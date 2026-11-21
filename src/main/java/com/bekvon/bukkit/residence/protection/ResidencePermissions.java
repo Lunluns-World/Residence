@@ -285,7 +285,7 @@ public class ResidencePermissions extends FlagPermissions {
         PermissionGroup group = rPlayer.getGroup(world);
 
         for (Entry<String, Boolean> flag : list.cuboidFlags.entrySet()) {
-            if (group.hasFlagAccess(flag.getKey()) || resadmin) {
+            if (resadmin || (group.hasFlagAccess(flag.getKey()) && !isFlagPermissionDenied(player, flag.getKey()))) {
                 this.cuboidFlags.put(flag.getKey(), flag.getValue());
             } else {
                 lm.Flag_SetDeny.sendMessage(player, flag.getKey());
@@ -295,7 +295,7 @@ public class ResidencePermissions extends FlagPermissions {
         for (Entry<UUID, Map<String, Boolean>> plists : list.getPlayerFlags().entrySet()) {
             Map<String, Boolean> map = this.getPlayerFlags(plists.getKey(), true);
             for (Entry<String, Boolean> flag : plists.getValue().entrySet()) {
-                if (group.hasFlagAccess(flag.getKey()) || resadmin) {
+                if (resadmin || (group.hasFlagAccess(flag.getKey()) && !isFlagPermissionDenied(player, flag.getKey()))) {
                     map.put(flag.getKey(), flag.getValue());
                 } else {
                     lm.Flag_SetDeny.sendMessage(player, flag.getKey());
@@ -306,7 +306,7 @@ public class ResidencePermissions extends FlagPermissions {
         for (Entry<String, Map<String, Boolean>> plists : list.getPlayerFlagsByName().entrySet()) {
             Map<String, Boolean> map = this.getPlayerFlags(plists.getKey(), true);
             for (Entry<String, Boolean> flag : plists.getValue().entrySet()) {
-                if (group.hasFlagAccess(flag.getKey()) || resadmin) {
+                if (resadmin || (group.hasFlagAccess(flag.getKey()) && !isFlagPermissionDenied(player, flag.getKey()))) {
                     map.put(flag.getKey(), flag.getValue());
                 } else {
                     lm.Flag_SetDeny.sendMessage(player, flag.getKey());
@@ -316,7 +316,7 @@ public class ResidencePermissions extends FlagPermissions {
 
         for (Entry<String, Map<String, Boolean>> glists : list.groupFlags.entrySet()) {
             for (Entry<String, Boolean> flag : glists.getValue().entrySet()) {
-                if (group.hasFlagAccess(flag.getKey()) || resadmin) {
+                if (resadmin || (group.hasFlagAccess(flag.getKey()) && !isFlagPermissionDenied(player, flag.getKey()))) {
                     if (!this.groupFlags.containsKey(glists.getKey()))
                         this.groupFlags.put(glists.getKey(), Collections.synchronizedMap(new HashMap<String, Boolean>()));
                     this.groupFlags.get(glists.getKey()).put(flag.getKey(), flag.getValue());
@@ -412,7 +412,8 @@ public class ResidencePermissions extends FlagPermissions {
                 lm.General_NoPermission.sendMessage(sender);
                 return false;
             }
-            if (checkFlagAccess && !hasFlagAccess(this.getOwnerUUID(), flag) && !ResPerm.flag_$1.hasPermission(sender, 10000L, flag.toLowerCase())) {
+            if (isFlagPermissionDenied(sender, flag)
+                    || (checkFlagAccess && !hasFlagAccess(this.getOwnerUUID(), flag) && !ResPerm.flag_$1.hasPermission(sender, 10000L, flag))) {
                 lm.Flag_SetFailed.sendMessage(sender, flag);
                 return false;
             }
@@ -642,6 +643,10 @@ public class ResidencePermissions extends FlagPermissions {
 
     public boolean removeAllPlayerFlags(CommandSender sender, UUID targetPlayerUUID, boolean resadmin) {
         if (this.hasResidencePermission(sender, false) || resadmin) {
+            if (!resadmin && hasDeniedFlags(sender, getPlayerFlags(targetPlayerUUID, false))) {
+                lm.General_NoPermission.sendMessage(sender);
+                return false;
+            }
 
             if (!isEventCallsSuspended()) {
                 ResidenceFlagChangeEvent fc = new ResidenceFlagChangeEvent(this.residence, sender instanceof Player ? (Player) sender : null, "ALL",
@@ -658,8 +663,16 @@ public class ResidencePermissions extends FlagPermissions {
         return false;
     }
 
+    private static boolean hasDeniedFlags(CommandSender sender, Map<String, Boolean> flags) {
+        return flags != null && flags.keySet().stream().anyMatch(flag -> isFlagPermissionDenied(sender, flag));
+    }
+
     public boolean removeAllGroupFlags(Player player, String group, boolean resadmin) {
         if (this.hasResidencePermission(player, false) || resadmin) {
+            if (!resadmin && hasDeniedFlags(player, groupFlags.get(group.toLowerCase()))) {
+                lm.General_NoPermission.sendMessage(player);
+                return false;
+            }
             if (!isEventCallsSuspended()) {
                 ResidenceFlagChangeEvent fc = new ResidenceFlagChangeEvent(residence, player, "ALL", ResidenceFlagChangeEvent.FlagType.GROUP, FlagState.NEITHER, null);
                 Residence.getInstance().getServ().getPluginManager().callEvent(fc);

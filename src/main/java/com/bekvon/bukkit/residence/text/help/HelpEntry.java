@@ -145,7 +145,8 @@ public class HelpEntry {
             } else {
                 if (GlobalFlags.getFlags().containsKey(entry.getName().toLowerCase())) {
                     Boolean state = GlobalFlags.getFlags().get(entry.getName().toLowerCase());
-                    if (!state && !resadmin && !ResPerm.flag_$1.hasPermission(sender, entry.getName().toLowerCase())) {
+                    if (!resadmin && (FlagPermissions.isFlagPermissionDenied(sender, entry.getName())
+                            || (!state && !ResPerm.flag_$1.hasPermission(sender, entry.getName())))) {
                         continue;
                     }
 
@@ -287,8 +288,12 @@ public class HelpEntry {
         return st.toString();
     }
 
-    @SuppressWarnings("deprecation")
     public Set<String> getSubCommands(CommandSender sender, String[] args) {
+        return getSubCommands(sender, args, false);
+    }
+
+    @SuppressWarnings("deprecation")
+    public Set<String> getSubCommands(CommandSender sender, String[] args, boolean resadmin) {
         Set<String> subCommands = new HashSet<String>();
         int neededArgPlace = args.length - 2;
 
@@ -299,56 +304,38 @@ public class HelpEntry {
 
         if (args.length > 0) {
             HashMap<String, List<String>> mp = new HashMap<String, List<String>>();
-            List<String> base = new ArrayList<String>();
+            String command = args[0].toLowerCase(java.util.Locale.ROOT);
+            boolean completingName = args.length == 1;
 
-            for (Entry<String, HashMap<String, List<String>>> one : LocaleManager.CommandTab.entrySet()) {
-                if (one.getKey().startsWith(args[0].toLowerCase())) {
-                    mp.putAll(one.getValue());
+            for (Entry<String, HashMap<String, List<String>>> entry : LocaleManager.CommandTab.entrySet()) {
+                String name = entry.getKey();
+                if (completingName ? !name.startsWith(command) : !name.equals(command))
+                    continue;
+                if (!resadmin && (ResidenceCommandListener.getAdminCommands().contains(name) || !ResPerm.command_$1.hasPermission(sender, name)))
+                    continue;
 
-                    if (ResPerm.command_$1.hasPermission(sender, one.getKey()))
-                        base.add(one.getKey());
-                }
+                if (completingName)
+                    subCommands.add(name);
+                else
+                    mp.putAll(entry.getValue());
             }
 
-            if (!mp.isEmpty()) {
-                if (args.length > 1) {
-                    if (args[args.length - 1].isEmpty()) {
-                        List<String> ls = mp.get(args[1].toLowerCase());
-                        if (ls != null) {
-                            neededArgPlace--;
-                            if (args.length == 2) {
-                                ArgsList.add(getMpEntry(mp));
-                            } else
-                                ArgsList = ls;
-                        } else {
-                            ls = mp.get("");
-                            if (ls != null) {
-                                ArgsList = ls;
-                            } else {
-                                ArgsList.add(getMp(mp));
-                            }
-                        }
-                    } else {
-                        List<String> main = mp.get("");
-                        if (main != null) {
-                            if (args.length == 2) {
-                                ArgsList.add(getMpEntry(mp));
-                            } else
-                                ArgsList = main;
-                        } else {
-                            ArgsList.add(getMp(mp));
-                        }
-                    }
-                } else {
-                    ArgsList.add(CMIList.listToString(base, "%%"));
-                    ArgsList.add(getMp(mp));
-                }
-            } else {
-                for (String one : LocaleManager.CommandTab.keySet()) {
-                    if (ResPerm.command_$1.hasPermission(sender, one))
-                        subCommands.add(one);
-                }
+            if (completingName || mp.isEmpty())
                 return subCommands;
+
+            if (args[args.length - 1].isEmpty() && mp.containsKey(args[1].toLowerCase())) {
+                neededArgPlace--;
+                if (args.length == 2)
+                    ArgsList.add(getMpEntry(mp));
+                else
+                    ArgsList = mp.get(args[1].toLowerCase());
+            } else if (mp.containsKey("")) {
+                if (args[args.length - 1].isEmpty() || args.length > 2)
+                    ArgsList = mp.get("");
+                else
+                    ArgsList.add(getMpEntry(mp));
+            } else {
+                ArgsList.add(getMp(mp));
             }
         }
 
@@ -463,6 +450,8 @@ public class HelpEntry {
                     }
 
                     for (String one : FlagPermissions.getAllPossibleFlags()) {
+                        if (!resadmin && FlagPermissions.isFlagPermissionDenied(sender, one))
+                            continue;
                         Flags f = Flags.getFlag(one);
 
                         if (f != null) {
@@ -478,6 +467,8 @@ public class HelpEntry {
                     }
 
                     for (String one : FlagPermissions.getPossibleAreaFlags()) {
+                        if (!resadmin && FlagPermissions.isFlagPermissionDenied(sender, one))
+                            continue;
                         Flags f = Flags.getFlag(one);
                         if (f != null) {
 

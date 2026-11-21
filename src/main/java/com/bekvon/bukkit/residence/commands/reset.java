@@ -13,6 +13,7 @@ import com.bekvon.bukkit.residence.containers.CommandAnnotation;
 import com.bekvon.bukkit.residence.containers.cmd;
 import com.bekvon.bukkit.residence.containers.lm;
 import com.bekvon.bukkit.residence.protection.ClaimedResidence;
+import com.bekvon.bukkit.residence.protection.FlagPermissions;
 
 import net.Zrips.CMILib.FileHandler.ConfigReader;
 
@@ -27,6 +28,11 @@ public class reset implements cmd {
         }
         if (args.length == 2 && !args[1].equalsIgnoreCase("-ownerflag")) {
             return false;
+        }
+        if (!resadmin && plugin.getPermissionManager().getAllFlags().getFlags().keySet().stream()
+                .anyMatch(flag -> FlagPermissions.isFlagPermissionDenied(sender, flag))) {
+            lm.General_NoPermission.sendMessage(sender);
+            return true;
         }
         String residenceName = null;
         boolean isAllResidence = false;
