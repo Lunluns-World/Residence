@@ -59,6 +59,7 @@ import com.bekvon.bukkit.residence.economy.TransactionManager;
 import com.bekvon.bukkit.residence.economy.rent.RentManager;
 import com.bekvon.bukkit.residence.gui.FlagUtil;
 import com.bekvon.bukkit.residence.itemlist.WorldItemManager;
+import com.bekvon.bukkit.residence.listeners.ContainerTransferListener;
 import com.bekvon.bukkit.residence.listeners.CrackShotListener;
 import com.bekvon.bukkit.residence.listeners.ResidenceBlockListener;
 import com.bekvon.bukkit.residence.listeners.ResidenceEntityListener;
@@ -650,6 +651,7 @@ public class Residence extends JavaPlugin {
                     pm.registerEvents(new ResidenceListener26_3_Paper(this), this);
                 }
                 pm.registerEvents(new ResidenceBlockListener(this), this);
+                pm.registerEvents(new ContainerTransferListener(this), this);
                 pm.registerEvents(getPlayerListener(), this);
                 pm.registerEvents(new ResidenceEntityListener(this), this);
                 pm.registerEvents(new ShopListener(this), this);

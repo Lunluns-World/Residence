@@ -21,6 +21,7 @@ import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockExplodeEvent;
 import org.bukkit.event.entity.EntityDeathEvent;
+import org.bukkit.event.entity.TrialSpawnerSpawnEvent;
 import org.bukkit.event.entity.EntityExplodeEvent;
 import org.bukkit.event.entity.ProjectileHitEvent;
 import org.bukkit.event.player.PlayerInteractEntityEvent;
@@ -116,6 +117,15 @@ public class ResidenceListener1_21 implements Listener {
             lm.Residence_FlagDeny.sendMessage(closest, Flags.leash, res.getName());
             event.setCancelled(true);
         }
+    }
+
+    @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
+    public void onTrialSpawnerSpawn(TrialSpawnerSpawnEvent event) {
+        Block spawner = event.getTrialSpawner().getBlock();
+        if (FlagPermissions.shouldIgnoreCheck(Flags.trial_spawner, spawner))
+            return;
+        if (FlagPermissions.has(spawner.getLocation(), Flags.trial_spawner, FlagCombo.OnlyFalse))
+            event.setCancelled(true);
     }
 
     @EventHandler(priority = EventPriority.LOWEST)

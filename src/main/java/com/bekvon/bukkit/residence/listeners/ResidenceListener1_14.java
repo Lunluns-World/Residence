@@ -129,6 +129,17 @@ public class ResidenceListener1_14 implements Listener {
 	}
 
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
+    public void onVillagerConversion(EntityTransformEvent event) {
+        if (FlagPermissions.shouldIgnoreCheck(Flags.villager_convert, event.getEntity()))
+            return;
+
+        EntityTransformEvent.TransformReason reason = event.getTransformReason();
+        if ((reason == EntityTransformEvent.TransformReason.INFECTION || reason == EntityTransformEvent.TransformReason.CURED)
+                && FlagPermissions.has(event.getEntity().getLocation(), Flags.villager_convert, FlagCombo.OnlyFalse))
+            event.setCancelled(true);
+    }
+
+    @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
     public void onAnimalTransformByLightning(EntityTransformEvent event) {
         // Paper 1.16.5+ uses EntityZapEvent for more detailed handling
         if (Version.isCurrentEqualOrHigher(Version.v1_16_5) && Version.isPaperBranch()) {

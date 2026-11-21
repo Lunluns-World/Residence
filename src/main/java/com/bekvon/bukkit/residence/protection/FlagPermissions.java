@@ -113,7 +113,7 @@ public class FlagPermissions {
     }
 
     public static void addFlag(Flags flag) {
-        addFlag(flag.name());
+        addFlag(flag.toString());
     }
 
     public static void addFlag(String flag) {
@@ -137,7 +137,7 @@ public class FlagPermissions {
     }
 
     public static void addPlayerOrGroupOnlyFlag(Flags flag) {
-        addPlayerOrGroupOnlyFlag(flag.name());
+        addPlayerOrGroupOnlyFlag(flag.toString());
     }
 
     public static void addPlayerOrGroupOnlyFlag(String flag) {
@@ -161,7 +161,7 @@ public class FlagPermissions {
     }
 
     public static void addResidenceOnlyFlag(Flags flag) {
-        addResidenceOnlyFlag(flag.name());
+        addResidenceOnlyFlag(flag.toString());
     }
 
     public static void addResidenceOnlyFlag(String flag) {
@@ -189,11 +189,13 @@ public class FlagPermissions {
 
         FlagState state = FlagState.TRUE;
 
-        if (flag.contains("-")) {
-            FlagState temp = FlagState.fromString(flag.split("-")[1]);
-            if (!temp.equals(FlagState.INVALID))
-                state = temp;
-            flag = flag.split("-")[0];
+        int stateSeparator = flag.lastIndexOf('-');
+        if (stateSeparator > 0 && Flags.getFlag(flag) == null) {
+            FlagState suffix = FlagState.fromString(flag.substring(stateSeparator + 1));
+            if (suffix != FlagState.INVALID) {
+                state = suffix;
+                flag = flag.substring(0, stateSeparator);
+            }
         }
 
         Flags f = Flags.getFlag(flag);

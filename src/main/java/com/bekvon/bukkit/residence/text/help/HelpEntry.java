@@ -152,8 +152,13 @@ public class HelpEntry {
 
                     String flagName = entry.getName();
                     Flags flag = Flags.getFlag(entry.getName());
-                    if (flag != null)
+                    if (flag != null) {
                         flagName = flag.getName();
+                    } else {
+                        ConfigurationSection customLocale = Residence.getInstance().getLocaleManager().getFlagLocale(flagName);
+                        if (customLocale != null)
+                            flagName = customLocale.getString("Translated", flagName);
+                    }
 
                     String desc = entry.getDescription();
 

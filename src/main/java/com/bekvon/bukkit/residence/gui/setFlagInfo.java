@@ -21,7 +21,6 @@ import com.google.common.collect.HashMultimap;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeModifier;
 
-import com.bekvon.bukkit.residence.LocaleManager;
 import com.bekvon.bukkit.residence.Residence;
 import com.bekvon.bukkit.residence.containers.Flags;
 import com.bekvon.bukkit.residence.containers.lm;
@@ -197,10 +196,7 @@ public class setFlagInfo {
     }
 
     private void recalculatePlayer() {
-        Map<String, Boolean> globalFlags = new HashMap<String, Boolean>();
-        for (Flags oneFlag : Flags.values()) {
-            globalFlags.put(oneFlag.toString(), oneFlag.isEnabled());
-        }
+        Map<String, Boolean> globalFlags = Residence.getInstance().getPermissionManager().getAllFlags().getFlags();
 
         List<String> flags = residence.getPermissions().getPossibleFlags(player, false, this.admin);
 
@@ -303,7 +299,11 @@ public class setFlagInfo {
         Boolean have = null;
         ResidencePermissions fp = this.residence.getPermissions();
 
-        if (this.targetPlayer != null) {
+        Flags flag = Flags.getFlag(flagName);
+        if (flag == null || flag == Flags.container_put || flag == Flags.container_take) {
+            Map<String, Boolean> flags = targetPlayer == null ? fp.getFlags() : fp.getPlayerFlags(targetPlayer);
+            have = flags == null ? null : flags.get(flagName);
+        } else if (this.targetPlayer != null) {
             if (fp.playerHas(targetPlayer, flagName, FlagCombo.OnlyTrue))
                 have = true;
             else if (fp.playerHas(targetPlayer, flagName, FlagCombo.OnlyFalse))
@@ -339,7 +339,6 @@ public class setFlagInfo {
         } else
             miscInfo.removeEnchantment(CMIEnchantEnum.LUCK_OF_THE_SEA.getEnchantment());
 
-        Flags flag = Flags.getFlag(flagName);
         if (flag != null)
             flagName = flag.getName();
         if (flagName == null)
@@ -350,12 +349,7 @@ public class setFlagInfo {
         // Can it be null?
         if (MiscInfoMeta == null)
             return miscInfo;
-        ConfigurationSection customLocale = null;
-        if (flag == null) {
-            LocaleManager locale = Residence.getInstance().getLocaleManager();
-            if (locale.getLocaleConfig() != null)
-                customLocale = locale.getLocaleConfig().getC().getConfigurationSection(locale.path + "flags.SubCommands." + flagName);
-        }
+        ConfigurationSection customLocale = flag == null ? Residence.getInstance().getLocaleManager().getFlagLocale(flagName) : null;
         String translated = customLocale == null ? null : customLocale.getString("Translated");
         if (translated != null)
             MiscInfoMeta.setDisplayName(lm.Gui_Flag_NameColor.getMessage() + CMIChatColor.translate(translated));

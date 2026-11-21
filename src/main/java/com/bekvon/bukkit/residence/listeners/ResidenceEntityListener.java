@@ -544,6 +544,24 @@ public class ResidenceEntityListener implements Listener {
         if (plugin.isDisabledWorldListener(ent))
             return;
         FlagPermissions perms = FlagPermissions.getPerms(event.getLocation());
+        String reason = event.getSpawnReason().name();
+        Flags specificFlag = null;
+        if ("TRIAL_SPAWNER".equals(reason)) {
+            specificFlag = Flags.trial_spawner;
+        } else if (("INFECTION".equals(reason) && "ZOMBIE_VILLAGER".equals(ent.getType().name()))
+                || ("CURED".equals(reason) && "VILLAGER".equals(ent.getType().name()))) {
+            specificFlag = Flags.villager_convert;
+        }
+
+        if (specificFlag != null && specificFlag.isGlobalyEnabled()) {
+            if (perms.has(specificFlag, FlagCombo.OnlyFalse)) {
+                event.setCancelled(true);
+                return;
+            }
+            if (perms.has(specificFlag, FlagCombo.OnlyTrue))
+                return;
+        }
+
         if (Utils.isAnimal(ent)) {
             if (!perms.has(Flags.animals, true)) {
                 event.setCancelled(true);
@@ -564,7 +582,6 @@ public class ResidenceEntityListener implements Listener {
             case BREEDING:
             case CHUNK_GEN:
             case CURED:
-            case DISPENSE_EGG:
             case EGG:
             case JOCKEY:
             case MOUNT:
@@ -579,6 +596,14 @@ public class ResidenceEntityListener implements Listener {
                 }
                 break;
             case SPAWNER_EGG:
+            case DISPENSE_EGG:
+                Flags fallback = event.getSpawnReason() == CreatureSpawnEvent.SpawnReason.DISPENSE_EGG ? Flags.nanimals : Flags.sanimals;
+                boolean allowed = perms.has(fallback, true);
+                if (Flags.animal_spawn_egg.isGlobalyEnabled())
+                    allowed = perms.has(Flags.animal_spawn_egg, allowed);
+                if (!allowed)
+                    event.setCancelled(true);
+                break;
             case SPAWNER:
                 if (perms.has(Flags.sanimals, FlagCombo.OnlyFalse)) {
                     event.setCancelled(true);
@@ -604,7 +629,6 @@ public class ResidenceEntityListener implements Listener {
                 break;
             case CHUNK_GEN:
             case CURED:
-            case DISPENSE_EGG:
             case INFECTION:
             case JOCKEY:
             case MOUNT:
@@ -619,6 +643,14 @@ public class ResidenceEntityListener implements Listener {
                 }
                 break;
             case SPAWNER_EGG:
+            case DISPENSE_EGG:
+                Flags fallback = event.getSpawnReason() == CreatureSpawnEvent.SpawnReason.DISPENSE_EGG ? Flags.nmonsters : Flags.smonsters;
+                boolean allowed = perms.has(fallback, true);
+                if (Flags.monster_spawn_egg.isGlobalyEnabled())
+                    allowed = perms.has(Flags.monster_spawn_egg, allowed);
+                if (!allowed)
+                    event.setCancelled(true);
+                break;
             case SPAWNER:
                 if (perms.has(Flags.smonsters, FlagCombo.OnlyFalse)) {
                     event.setCancelled(true);

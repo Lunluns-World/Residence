@@ -96,6 +96,12 @@ Global:
     # Applies to: Both
     # Allows or denys use of furnaces, chests, dispensers, etc...
     container: true
+    # Applies to: Both
+    # Allows players to put items into an open container
+    container-put: true
+    # Applies to: Both
+    # Allows players to take items from an open container
+    container-take: true
     # Applies to: Residence
     # Hides residence coordinates
     coords: true
@@ -436,6 +442,18 @@ Global:
     # Allows or denys wither spawning
     witherspawn: true
     # Applies to: Residence
+    # Controls villager infection and curing
+    villager-convert: true
+    # Applies to: Residence
+    # Controls mob spawning from trial spawners
+    trial-spawner: true
+    # Applies to: Residence
+    # Controls animals spawned from spawn eggs
+    animal-spawn-egg: true
+    # Applies to: Residence
+    # Controls monsters spawned from spawn eggs
+    monster-spawn-egg: true
+    # Applies to: Residence
     # Change players walk speed in residence to %1
     wspeed1: true
     # Applies to: Residence
@@ -470,6 +488,8 @@ Global:
     command: COMMAND_BLOCK
     commandblock: COMMAND_BLOCK
     container: CHEST_MINECART
+    container-put: HOPPER
+    container-take: DROPPER
     coords: COMPASS
     copper: COPPER_BLOCK
     copperoxidation: OXIDIZED_COPPER

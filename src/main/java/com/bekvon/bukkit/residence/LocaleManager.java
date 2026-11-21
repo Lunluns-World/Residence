@@ -5,6 +5,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.lang.reflect.InvocationTargetException;
 import java.nio.charset.StandardCharsets;
@@ -15,6 +16,7 @@ import java.util.List;
 import java.util.Map.Entry;
 
 import org.apache.commons.lang.Validate;
+import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.configuration.file.YamlConfiguration;
 
@@ -113,6 +115,7 @@ public class LocaleManager {
             return;
         c.load();
         c.copyDefaults(true);
+        copyBundledFlagTranslations(lang);
 
         if (lang.equalsIgnoreCase(plugin.getConfigManager().getLanguage()))
             c.setRecordContents(true);
@@ -189,6 +192,28 @@ public class LocaleManager {
 
         // Write back config
         c.save();
+    }
+
+    private void copyBundledFlagTranslations(String language) {
+        String flagsPath = path + "flags.SubCommands";
+        try (InputStream resource = plugin.getResource("Language/" + language + ".yml")) {
+            if (resource == null)
+                return;
+            YamlConfiguration defaults = YamlConfiguration.loadConfiguration(new InputStreamReader(resource, StandardCharsets.UTF_8));
+            ConfigurationSection bundled = defaults.getConfigurationSection(flagsPath);
+            if (bundled == null)
+                return;
+            for (String key : bundled.getKeys(true)) {
+                if (!bundled.isConfigurationSection(key) && !c.getC().contains(flagsPath + "." + key))
+                    c.getC().set(flagsPath + "." + key, bundled.get(key));
+            }
+        } catch (IOException e) {
+            plugin.getLogger().warning("Could not read bundled Residence flag translations: " + e.getMessage());
+        }
+    }
+
+    public ConfigurationSection getFlagLocale(String flag) {
+        return c == null ? null : c.getC().getConfigurationSection(path + "flags.SubCommands." + flag);
     }
 
     public ConfigReader getLocaleConfig() {

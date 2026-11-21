@@ -36,6 +36,8 @@ public enum Flags {
     commandblock(CMIMaterial.COMMAND_BLOCK, FlagMode.Both, "Allows or denys command block interaction", false),
     command(CMIMaterial.COMMAND_BLOCK, FlagMode.Both, "Allows or denys comamnd use in residences", false),
     container(CMIMaterial.CHEST_MINECART, FlagMode.Both, "Allows or denys use of furnaces, chests, dispensers, etc...", true),
+    container_put("container-put", CMIMaterial.HOPPER, FlagMode.Both, "Allows players to put items into an open container", true),
+    container_take("container-take", CMIMaterial.DROPPER, FlagMode.Both, "Allows players to take items from an open container", true),
     coords(CMIMaterial.COMPASS, FlagMode.Residence, "Hides residence coordinates", true),
     copper(CMIMaterial.COPPER_BLOCK, FlagMode.Both, "Allows to modify copper blocks", true),
 	copperoxidation(CMIMaterial.OXIDIZED_COPPER, FlagMode.Residence, "Allow or deny all copper blocks oxidation", true),
@@ -143,6 +145,10 @@ public enum Flags {
     vehicleplacing(CMIMaterial.MINECART, FlagMode.Both, "Allows or denys vehicle placing", true),
     witherspawn(CMIMaterial.WITHER_SKELETON_SKULL, FlagMode.Residence, "Allows or denys wither spawning", true),
     phantomspawn(CMIMaterial.BROWN_WOOL, FlagMode.Residence, "Allows or denys phantom spawning", true),
+    villager_convert("villager-convert", CMIMaterial.VILLAGER_SPAWN_EGG, FlagMode.Residence, "Controls villager infection and zombie villager curing", true),
+    trial_spawner("trial-spawner", CMIMaterial.TRIAL_SPAWNER, FlagMode.Residence, "Controls mob spawning from trial spawners", true),
+    animal_spawn_egg("animal-spawn-egg", CMIMaterial.SHEEP_SPAWN_EGG, FlagMode.Residence, "Controls animals spawned from spawn eggs", true),
+    monster_spawn_egg("monster-spawn-egg", CMIMaterial.ZOMBIE_SPAWN_EGG, FlagMode.Residence, "Controls monsters spawned from spawn eggs", true),
     windexplode(CMIMaterial.WIND_CHARGE, FlagMode.Both, "Allow or deny wind_charge explosions", true),
     witherdamage(CMIMaterial.WITHER_SKELETON_SKULL, FlagMode.Residence, "Allows or denys wither damage", true),
     witherdestruction(CMIMaterial.WITHER_SKELETON_SKULL, FlagMode.Residence, "Allows or denys wither block damage", true),
@@ -150,6 +156,7 @@ public enum Flags {
     wspeed1(CMIMaterial.POTION, FlagMode.Residence, "Change players walk speed in residence to %1", true),
     wspeed2(CMIMaterial.POTION, FlagMode.Residence, "Change players walk speed in residence to %1", true);
 
+    private final String key;
     private String translated = null;
     private CMIMaterial icon;
     private FlagMode flagMode;
@@ -163,14 +170,24 @@ public enum Flags {
     }
 
     private Flags(CMIMaterial icon, FlagMode flagMode, String desc, boolean enabled) {
+        this(null, icon, flagMode, desc, enabled);
+    }
+
+    private Flags(String key, CMIMaterial icon, FlagMode flagMode, String desc, boolean enabled) {
+        this.key = key;
         this.icon = icon;
         this.flagMode = flagMode;
         this.desc = desc;
         this.enabled = enabled;
     }
 
+    @Override
+    public String toString() {
+        return key == null ? name() : key;
+    }
+
     public String getName() {
-        return getTranslated() == null ? this.name() : getTranslated();
+        return getTranslated() == null ? toString() : getTranslated();
     }
 
     public FlagMode getFlagMode() {

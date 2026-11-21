@@ -809,6 +809,18 @@ CommandHelp:
               Description: 允許或禁止使用熔爐、儲物箱、發射器...
               Info:
               - '&e用法：&6/res set/pset <領地名稱> container true/false/remove'
+            container-put:
+              Translated: 放入容器 (container-put)
+              Description: 允許或禁止玩家將物品放入已開啟的容器；未設定時沿用 container。
+              Info:
+              - '&e用法：&6/res set <領地名稱> container-put true/false/remove'
+              - '&e個人設定：&6/res pset <領地名稱> <玩家> container-put true/false/remove'
+            container-take:
+              Translated: 拿取容器物品 (container-take)
+              Description: 允許或禁止玩家從已開啟的容器拿取物品；未設定時沿用 container。
+              Info:
+              - '&e用法：&6/res set <領地名稱> container-take true/false/remove'
+              - '&e個人設定：&6/res pset <領地名稱> <玩家> container-take true/false/remove'
             coords:
               Translated: 隱藏座標 (coords)
               Description: 隱藏領地座標
@@ -1144,6 +1156,18 @@ CommandHelp:
               Description: 允許或禁止在領地內戰鬥
               Info:
               - '&e用法：&6/res set <領地名稱> pvp true/false/remove'
+            quickshop-create:
+              Translated: 建立 QuickShop 商店 (quickshop-create)
+              Description: 允許或禁止玩家在領地內建立 QuickShop 商店。
+              Info:
+              - '&e用法：&6/res set <領地名稱> quickshop-create true/false/remove'
+              - '&e個人設定：&6/res pset <領地名稱> <玩家> quickshop-create true/false/remove'
+            quickshop-trade:
+              Translated: 使用 QuickShop 交易 (quickshop-trade)
+              Description: 允許或禁止玩家與領地內的 QuickShop 商店交易。
+              Info:
+              - '&e用法：&6/res set <領地名稱> quickshop-trade true/false/remove'
+              - '&e個人設定：&6/res pset <領地名稱> <玩家> quickshop-trade true/false/remove'
             rain:
               Translated: 下雨 (rain)
               Description: 設定領地天氣為雨天
@@ -1304,6 +1328,26 @@ CommandHelp:
               Description: 允許或禁止生成夜魅
               Info:
               - '&e用法：&6/res set <領地名稱> phantomspawn true/false/remove'
+            villager-convert:
+              Translated: 村民轉化 (villager-convert)
+              Description: 允許或禁止村民感染與殭屍村民治療；未設定時沿用原生怪規則。
+              Info:
+              - '&e用法：&6/res set <領地名稱> villager-convert true/false/remove'
+            trial-spawner:
+              Translated: 試煉生怪磚 (trial-spawner)
+              Description: 允許或禁止試煉生怪磚生成生物。
+              Info:
+              - '&e用法：&6/res set <領地名稱> trial-spawner true/false/remove'
+            animal-spawn-egg:
+              Translated: 動物生怪蛋 (animal-spawn-egg)
+              Description: 控制玩家或發射器用生怪蛋生成動物。
+              Info:
+              - '&e用法：&6/res set <領地名稱> animal-spawn-egg true/false/remove'
+            monster-spawn-egg:
+              Translated: 怪物生怪蛋 (monster-spawn-egg)
+              Description: 控制玩家或發射器用生怪蛋生成怪物。
+              Info:
+              - '&e用法：&6/res set <領地名稱> monster-spawn-egg true/false/remove'
             witherdamage:
               Translated: 凋零怪傷害 (witherdamage)
               Description: 允許或禁止凋零怪傷害
