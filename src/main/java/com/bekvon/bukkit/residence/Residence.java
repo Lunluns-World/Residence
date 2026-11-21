@@ -7,6 +7,10 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -1009,127 +1013,57 @@ public class Residence extends JavaPlugin {
         }
     }
 
-    private static void saveBackup(File ymlSaveLoc, String worldName, File worldFolder) {
-        if (ymlSaveLoc.isFile()) {
-            File backupFolder = new File(worldFolder, "Backup");
-            backupFolder.mkdirs();
-            File backupFile = new File(backupFolder, "res_" + getSaveWorldName(worldName) + ".yml");
-            if (backupFile.isFile()) {
-                backupFile.delete();
+    private static void saveRecord(File destination, Map<String, Object> records) throws IOException {
+        Path file = destination.toPath();
+        Path directory = file.getParent();
+        Files.createDirectories(directory);
+        Path temporary = Files.createTempFile(directory, destination.getName() + ".", ".tmp");
+        try {
+            YMLSaveHelper yml = new YMLSaveHelper(temporary.toFile());
+            yml.getRoot().putAll(records);
+            yml.save();
+
+            if (Files.isRegularFile(file)) {
+                Path backupDirectory = Files.createDirectories(directory.resolve("Backup"));
+                Path backup = backupDirectory.resolve(file.getFileName());
+                Path backupTemporary = Files.createTempFile(backupDirectory, destination.getName() + ".", ".tmp");
+                try {
+                    Files.copy(file, backupTemporary, StandardCopyOption.REPLACE_EXISTING);
+                    Files.move(backupTemporary, backup, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+                } finally {
+                    Files.deleteIfExists(backupTemporary);
+                }
             }
-            ymlSaveLoc.renameTo(backupFile);
+            Files.move(temporary, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        } finally {
+            Files.deleteIfExists(temporary);
         }
     }
 
-    private void saveYml() throws IOException {
+    private synchronized void saveYml() throws IOException {
         File saveFolder = new File(dataFolder, "Save");
         File worldFolder = new File(saveFolder, "Worlds");
-        if (!worldFolder.isDirectory())
-            worldFolder.mkdirs();
-        YMLSaveHelper syml;
-        Map<String, Object> save = getResidenceManager().save();
-        for (Entry<String, Object> entry : save.entrySet()) {
-
-            boolean emptyRecord = false;
-            // Not saving files without any records in them. Mainly for servers with many
-            // small temporary worlds
-            try {
-                emptyRecord = ((LinkedHashMap) entry.getValue()).isEmpty();
-            } catch (Throwable e) {
-            }
-
-            File ymlSaveLoc = new File(worldFolder, "res_" + getSaveWorldName(entry.getKey()) + ".yml");
-
-            if (emptyRecord) {
-                saveBackup(ymlSaveLoc, entry.getKey(), worldFolder);
+        for (Entry<String, Object> entry : getResidenceManager().save().entrySet()) {
+            String world = entry.getKey();
+            File destination = new File(worldFolder, "res_" + getSaveWorldName(world) + ".yml");
+            if (entry.getValue() instanceof Map && ((Map<?, ?>) entry.getValue()).isEmpty() && !destination.isFile())
                 continue;
-            }
 
-            File tmpFile = new File(worldFolder, "tmp_res_" + getSaveWorldName(entry.getKey()) + ".yml");
-
-            syml = new YMLSaveHelper(tmpFile);
-            if (this.getResidenceManager().getMessageCatch(entry.getKey()) != null)
-                syml.getRoot().put("Messages", this.getResidenceManager().getMessageCatch(entry.getKey()));
-            if (this.getResidenceManager().getFlagsCatch(entry.getKey()) != null)
-                syml.getRoot().put("Flags", this.getResidenceManager().getFlagsCatch(entry.getKey()));
-
-            syml.getRoot().put("Residences", entry.getValue());
-            syml.save();
-
-            saveBackup(ymlSaveLoc, entry.getKey(), worldFolder);
-
-            tmpFile.renameTo(ymlSaveLoc);
+            Map<String, Object> records = new LinkedHashMap<>();
+            Map<?, ?> messages = getResidenceManager().getMessageCatch(world);
+            if (messages != null)
+                records.put("Messages", messages);
+            Map<?, ?> flags = getResidenceManager().getFlagsCatch(world);
+            if (flags != null)
+                records.put("Flags", flags);
+            records.put("Residences", entry.getValue());
+            saveRecord(destination, records);
         }
 
-        YMLSaveHelper yml;
-        // For Sale save
-        File ymlSaveLoc = new File(saveFolder, "forsale.yml");
-        File tmpFile = new File(saveFolder, "tmp_forsale.yml");
-        yml = new YMLSaveHelper(tmpFile);
-        yml.save();
-        yml.getRoot().put("Economy", getTransactionManager().save());
-        yml.save();
-        if (ymlSaveLoc.isFile()) {
-            File backupFolder = new File(saveFolder, "Backup");
-            backupFolder.mkdirs();
-            File backupFile = new File(backupFolder, "forsale.yml");
-            if (backupFile.isFile()) {
-                backupFile.delete();
-            }
-            ymlSaveLoc.renameTo(backupFile);
-        }
-        tmpFile.renameTo(ymlSaveLoc);
-
-        // Leases save
-        ymlSaveLoc = new File(saveFolder, "leases.yml");
-        tmpFile = new File(saveFolder, "tmp_leases.yml");
-        yml = new YMLSaveHelper(tmpFile);
-        yml.getRoot().put("Leases", getLeaseManager().save());
-        yml.save();
-        if (ymlSaveLoc.isFile()) {
-            File backupFolder = new File(saveFolder, "Backup");
-            backupFolder.mkdirs();
-            File backupFile = new File(backupFolder, "leases.yml");
-            if (backupFile.isFile()) {
-                backupFile.delete();
-            }
-            ymlSaveLoc.renameTo(backupFile);
-        }
-        tmpFile.renameTo(ymlSaveLoc);
-
-        // permlist save
-        ymlSaveLoc = new File(saveFolder, "permlists.yml");
-        tmpFile = new File(saveFolder, "tmp_permlists.yml");
-        yml = new YMLSaveHelper(tmpFile);
-        yml.getRoot().put("PermissionLists", pmanager.save());
-        yml.save();
-        if (ymlSaveLoc.isFile()) {
-            File backupFolder = new File(saveFolder, "Backup");
-            backupFolder.mkdirs();
-            File backupFile = new File(backupFolder, "permlists.yml");
-            if (backupFile.isFile()) {
-                backupFile.delete();
-            }
-            ymlSaveLoc.renameTo(backupFile);
-        }
-        tmpFile.renameTo(ymlSaveLoc);
-
-        // rent save
-        ymlSaveLoc = new File(saveFolder, "rent.yml");
-        tmpFile = new File(saveFolder, "tmp_rent.yml");
-        yml = new YMLSaveHelper(tmpFile);
-        yml.getRoot().put("RentSystem", getRentManager().save());
-        yml.save();
-        if (ymlSaveLoc.isFile()) {
-            File backupFolder = new File(saveFolder, "Backup");
-            backupFolder.mkdirs();
-            File backupFile = new File(backupFolder, "rent.yml");
-            if (backupFile.isFile()) {
-                backupFile.delete();
-            }
-            ymlSaveLoc.renameTo(backupFile);
-        }
-        tmpFile.renameTo(ymlSaveLoc);
+        saveRecord(new File(saveFolder, "forsale.yml"), Collections.singletonMap("Economy", getTransactionManager().save()));
+        saveRecord(new File(saveFolder, "leases.yml"), Collections.singletonMap("Leases", getLeaseManager().save()));
+        saveRecord(new File(saveFolder, "permlists.yml"), Collections.singletonMap("PermissionLists", pmanager.save()));
+        saveRecord(new File(saveFolder, "rent.yml"), Collections.singletonMap("RentSystem", getRentManager().save()));
 
         if (getConfigManager().showIntervalMessages()) {
             System.out.println("[Residence] - Saved Residences...");

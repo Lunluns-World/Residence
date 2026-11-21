@@ -114,6 +114,7 @@ import net.Zrips.CMILib.Items.CMIMaterial;
 import net.Zrips.CMILib.Logs.CMIDebug;
 import net.Zrips.CMILib.TitleMessages.CMITitleMessage;
 import net.Zrips.CMILib.Util.CMIVersionChecker;
+import net.Zrips.CMILib.RawMessages.RawMessage;
 import net.Zrips.CMILib.Version.Version;
 import net.Zrips.CMILib.Version.Schedulers.CMIScheduler;
 
@@ -725,20 +726,28 @@ public class ResidencePlayerListener implements Listener {
         boolean ForRent = res.isForRent();
         String landName = res.getName();
         if (event.getAction() == Action.RIGHT_CLICK_BLOCK) {
-            if (ForSale) {
-                Bukkit.dispatchCommand(player, "res market buy " + landName);
+            if (ForRent && res.isRented() && player.isSneaking()) {
+                Bukkit.dispatchCommand(player, "res market release " + landName);
                 return;
             }
+            if (!ForSale && !ForRent)
+                return;
 
-            if (ForRent) {
-                if (res.isRented() && player.isSneaking())
-                    Bukkit.dispatchCommand(player, "res market release " + landName);
-                else {
-                    boolean autoRenew = !player.isSneaking();
-                    Bukkit.dispatchCommand(player, "res market rent " + landName + " " + autoRenew);
-                }
+            if (!Bukkit.dispatchCommand(player, "res market info " + landName))
                 return;
+            RawMessage actions = new RawMessage();
+            if (ForSale) {
+                actions.addText(lm.Sign_ConfirmBuy.getMessage()).addCommand("res market buy " + landName);
+            } else if (!res.isRented()) {
+                actions.addText(lm.Sign_ConfirmRent.getMessage()).addCommand("res market rent " + landName + " false");
+                RentableLand rentable = res.getRentable();
+                if (rentable != null && rentable.AllowAutoPay) {
+                    actions.addText(" ");
+                    actions.addText(lm.Sign_ConfirmRentAutoPay.getMessage()).addCommand("res market rent " + landName + " true");
+                }
             }
+            if (ForSale || !res.isRented())
+                actions.show(player);
         } else if (event.getAction() == Action.LEFT_CLICK_BLOCK && ForRent && res.isRented() && plugin.getRentManager().getRentingPlayer(res).equals(player.getName())) {
             plugin.getRentManager().payRent(player, res, false);
         }
@@ -1278,6 +1287,15 @@ public class ResidencePlayerListener implements Listener {
         if (ResAdmin.isResAdmin(player)) {
             return;
         }
+        if (event.getAction() == Action.RIGHT_CLICK_BLOCK && Flags.explode.isGlobalyEnabled()
+                && willExplodeOnUse(event, block)) {
+            FlagPermissions permissions = FlagPermissions.getPerms(block.getLocation());
+            if (!permissions.has(Flags.explode, permissions.has(Flags.destroy, true))) {
+                lm.Flag_Deny.sendMessage(player, Flags.explode);
+                event.setCancelled(true);
+                return;
+            }
+        }
         Material mat = block.getType();
         // Residence assigns Flags internally for Material
         Flags flag = FlagPermissions.getMaterialUseFlagList().get(mat);
@@ -1341,6 +1359,26 @@ public class ResidencePlayerListener implements Listener {
             event.setCancelled(true);
         }
         // End AbstractBlockClickFlag Check
+    }
+
+    private boolean willExplodeOnUse(PlayerInteractEvent event, Block block) {
+        if (event.getPlayer().isSneaking() && event.hasItem())
+            return false;
+        CMIMaterial material = CMIMaterial.get(block.getType());
+        World world = block.getWorld();
+        if (material.containsCriteria(CMIMC.BED)) {
+            try {
+                return !world.isBedWorks();
+            } catch (NoSuchMethodError legacyServer) {
+                return world.getEnvironment() != Environment.NORMAL;
+            }
+        }
+        if (material != CMIMaterial.RESPAWN_ANCHOR || !Version.isCurrentEqualOrHigher(Version.v1_16_0))
+            return false;
+        org.bukkit.block.data.type.RespawnAnchor anchor = (org.bukkit.block.data.type.RespawnAnchor) block.getBlockData();
+        if (anchor.getCharges() == 0 || (CMIMaterial.get(event.getItem()) == CMIMaterial.GLOWSTONE && anchor.getCharges() < anchor.getMaximumCharges()))
+            return false;
+        return !world.isRespawnAnchorWorks();
     }
 
     private boolean canBothClickBlock(Material mat) {
@@ -1555,9 +1593,12 @@ public class ResidencePlayerListener implements Listener {
                 canPlaceInside = clickBlock.getBlockData() instanceof org.bukkit.block.data.Waterlogged;
             }
         }
-        Location loc = canPlaceInside
-                ? clickBlock.getLocation()
-                : clickBlock.getRelative(event.getBlockFace()).getLocation();
+        Location loc;
+        try {
+            loc = event.getBlock().getLocation();
+        } catch (NoSuchMethodError legacyServer) {
+            loc = canPlaceInside ? clickBlock.getLocation() : clickBlock.getRelative(event.getBlockFace()).getLocation();
+        }
 
         ClaimedResidence res = plugin.getResidenceManager().getByLoc(loc);
         if (res != null) {
@@ -1642,16 +1683,17 @@ public class ResidencePlayerListener implements Listener {
             return;
 
         Location loc = event.getTo();
-        boolean handled = handleNewLocation(player, loc, false);
         ClaimedResidence resTo = plugin.getResidenceManager().getByLoc(loc);
         ClaimedResidence resFrom = plugin.getResidenceManager().getByLoc(player.getLocation());
 
         boolean allowed = ResAdmin.isResAdmin(player) || allowedTeleport(player, event, resTo);
 
-        if (!allowed)
+        if (!allowed) {
             event.setCancelled(true);
+            return;
+        }
 
-        if (allowed && handled && !Objects.equals(resFrom, resTo)) {
+        if (handleNewLocation(player, loc, false) && !Objects.equals(resFrom, resTo)) {
             ResidenceEvent.callAsync(new ResidenceChangedEvent(resFrom, resTo, player));
         }
     }
@@ -1661,8 +1703,9 @@ public class ResidencePlayerListener implements Listener {
         if (resTo == null)
             return true;
 
-        if (event.getCause() == TeleportCause.COMMAND || event.getCause() == TeleportCause.NETHER_PORTAL || event
-                .getCause() == TeleportCause.PLUGIN) {
+        boolean consumableTeleport = Utils.isChorusTeleport(event.getCause());
+        if (event.getCause() == TeleportCause.COMMAND || event.getCause() == TeleportCause.NETHER_PORTAL
+                || event.getCause() == TeleportCause.PLUGIN || consumableTeleport) {
             if (resTo.getPermissions().playerHas(player, Flags.move, FlagCombo.OnlyFalse) && !resTo.isOwner(player)
                     && !ResPerm.bypass_tp.hasPermission(player, 10000L) && !ResPerm.admin_move.hasPermission(player, 10000L)) {
                 lm.Residence_MoveDeny.sendMessage(player, resTo.getName());
@@ -1680,7 +1723,7 @@ public class ResidencePlayerListener implements Listener {
             return false;
         }
 
-        if (Utils.isChorusTeleport(event.getCause()) && !resTo.isOwner(player) && resTo.getPermissions().playerHas(player, Flags.chorustp, FlagCombo.OnlyFalse) && !ResPerm.admin_tp.hasPermission(
+        if (consumableTeleport && !resTo.isOwner(player) && resTo.getPermissions().playerHas(player, Flags.chorustp, FlagCombo.OnlyFalse) && !ResPerm.admin_tp.hasPermission(
                 player)) {
             lm.Residence_FlagDeny.sendMessage(player, Flags.chorustp, resTo.getName());
             return false;

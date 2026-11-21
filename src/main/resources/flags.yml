@@ -193,7 +193,7 @@ Global:
     # Allows or denys goat horn usage
     goathorn: true
     # Applies to: Residence
-    # Allow or deny golem open chest
+    # Allow or deny copper golems opening chests (Paper 1.21.9+)
     golemopenchest: true
     # Applies to: Both
     # Allows or denys players to use grindstones

@@ -39,6 +39,7 @@ import org.bukkit.event.block.BlockSpreadEvent;
 import org.bukkit.event.block.EntityBlockFormEvent;
 import org.bukkit.event.block.LeavesDecayEvent;
 import org.bukkit.event.entity.EntityChangeBlockEvent;
+import org.bukkit.event.entity.EntityPortalEvent;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryMoveItemEvent;
 import org.bukkit.event.inventory.InventoryType;
@@ -200,7 +201,7 @@ public class ResidenceBlockListener implements Listener {
         if (plugin.isDisabledWorldListener(event.getWorld())) {
             return;
         }
-        if (Flags.glow.isGlobalyEnabled()) {
+        if (Flags.grow.isGlobalyEnabled()) {
             if (FlagPermissions.has(event.getLocation(), Flags.grow, FlagCombo.OnlyFalse)) {
                 event.setCancelled(true);
                 return;
@@ -422,6 +423,19 @@ public class ResidenceBlockListener implements Listener {
     }
 
     public static final String SourceResidenceName = "SourceResidenceName";
+
+    @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
+    public void onFallingBlockPortal(EntityPortalEvent event) {
+        Location destination = event.getTo();
+        if (event.getEntityType() != EntityType.FALLING_BLOCK || destination == null
+                || FlagPermissions.shouldIgnoreCheck(Flags.fallinprotection, destination.getWorld()))
+            return;
+
+        ClaimedResidence target = ClaimedResidence.getByLoc(destination);
+        if (target != null && target != ClaimedResidence.getByLoc(event.getFrom())
+                && target.getPermissions().has(Flags.fallinprotection, FlagCombo.TrueOrNone))
+            event.setCancelled(true);
+    }
 
     @EventHandler
     public void onEntityChangeBlock(EntityChangeBlockEvent event) {
@@ -784,48 +798,9 @@ public class ResidenceBlockListener implements Listener {
             return;
 
         List<Block> blocks = event.getBlocks();
-        if (blocks.isEmpty()) {
-            return;
-        }
-
-        int minX = Integer.MAX_VALUE;
-        int maxX = Integer.MIN_VALUE;
-        int minY = Integer.MAX_VALUE;
-        int maxY = Integer.MIN_VALUE;
-        int minZ = Integer.MAX_VALUE;
-        int maxZ = Integer.MIN_VALUE;
-
-        BlockFace dir = event.getDirection();
-        int dirX = dir.getModX();
-        int dirY = dir.getModY();
-        int dirZ = dir.getModZ();
-
-        for (Block block : blocks) {
-            int targetX = block.getX() + dirX;
-            int targetY = block.getY() + dirY;
-            int targetZ = block.getZ() + dirZ;
-            minX = Math.min(minX, targetX);
-            maxX = Math.max(maxX, targetX);
-            minY = Math.min(minY, targetY);
-            maxY = Math.max(maxY, targetY);
-            minZ = Math.min(minZ, targetZ);
-            maxZ = Math.max(maxZ, targetZ);
-        }
-
-        World world = piston.getWorld();
-        // Both ends (min/max corners) are inside pistonRes, skip checks
-        if (pistonRes != null
-                && pistonRes.containsLoc(new Location(world, minX, minY, minZ))
-                && pistonRes.containsLoc(new Location(world, maxX, maxY, maxZ))) {
-            return;
-        }
-        // Farthest block first, matching the piston's push order
+        BlockFace direction = event.getDirection();
         for (int i = blocks.size() - 1; i >= 0; i--) {
-            Block block = blocks.get(i);
-            Location targetLoc = new Location(world,
-                    block.getX() + dirX,
-                    block.getY() + dirY,
-                    block.getZ() + dirZ);
+            Location targetLoc = blocks.get(i).getRelative(direction).getLocation();
 
             ClaimedResidence targetRes = ClaimedResidence.getByLoc(targetLoc);
             if (targetRes == null) {
@@ -1055,88 +1030,33 @@ public class ResidenceBlockListener implements Listener {
         if (player != null && (player.hasMetadata("NPC") || ResAdmin.isResAdmin(player))) {
             return;
         }
-        ArrayList<Vector> corners = getNetherPortalCorners(event);
+        Iterable<?> blocks;
+        try {
+            blocks = (Iterable<?>) event.getClass().getMethod("getBlocks").invoke(event);
+        } catch (ReflectiveOperationException | ClassCastException exception) {
+            plugin.getLogger().log(java.util.logging.Level.WARNING, "Could not check the destination of a nether portal", exception);
+            event.setCancelled(true);
+            return;
+        }
+
         FlagPermissions worldPerms = null;
-
-        for (Vector one : corners) {
-            Location loc = new Location(world, one.getX(), one.getY(), one.getZ());
+        for (Object block : blocks) {
+            Location loc = block instanceof BlockState ? ((BlockState) block).getLocation() : ((Block) block).getLocation();
             ClaimedResidence res = ClaimedResidence.getByLoc(loc);
-            // Avoid repeatedly fetching world permissions
             if (res == null && worldPerms == null) {
-                worldPerms = (player != null)
-                        ? Residence.getInstance().getWorldFlags().getPerms(player)
-                        : Residence.getInstance().getWorldFlags().getPerms(world);
+                worldPerms = player == null
+                        ? plugin.getWorldFlags().getPerms(world)
+                        : plugin.getWorldFlags().getPerms(world.getName(), ResidencePlayer.get(player).getGroup(world.getName(), true).getGroupName());
             }
-            FlagPermissions perms = (res != null)
-                    ? res.getPermissions()
-                    : worldPerms;
-
-            boolean canBuild;
-            if (player != null) {
-                canBuild = perms.playerHas(player, Flags.build, true);
-                if (!canBuild) {
-                    lm.Invalid_PortalDestination.sendMessage(player);
-                }
-            } else {
-                canBuild = perms.has(Flags.build, true);
-            }
+            FlagPermissions perms = res == null ? worldPerms : res.getPermissions();
+            boolean canBuild = player == null ? perms.has(Flags.build, true) : perms.playerHas(player, Flags.build, true);
             if (!canBuild) {
+                if (player != null)
+                    lm.Invalid_PortalDestination.sendMessage(player);
                 event.setCancelled(true);
                 return;
             }
         }
-    }
-
-    @SuppressWarnings("unchecked")
-    private static ArrayList<Vector> getNetherPortalCorners(PortalCreateEvent e) {
-        ArrayList<Vector> locs = new ArrayList<Vector>();
-
-        List<?> list = new ArrayList<>();
-        boolean isModern = Version.isCurrentEqualOrHigher(Version.v1_14_0);
-        try {
-            list = isModern
-                    ? (ArrayList<BlockState>) e.getClass().getMethod("getBlocks").invoke(e)
-                    : (ArrayList<Block>) e.getClass().getMethod("getBlocks").invoke(e);
-        } catch (Exception e1) {
-            e1.printStackTrace();
-        }
-        if (list.isEmpty()) {
-            return locs;
-        }
-
-        int minX = Integer.MAX_VALUE;
-        int maxX = Integer.MIN_VALUE;
-        int minY = Integer.MAX_VALUE;
-        int maxY = Integer.MIN_VALUE;
-        int minZ = Integer.MAX_VALUE;
-        int maxZ = Integer.MIN_VALUE;
-
-        for (Object target : list) {
-            Location one = isModern
-                    ? ((BlockState) target).getLocation()
-                    : ((Block) target).getLocation();
-
-            int targetX = one.getBlockX();
-            int targetY = one.getBlockY();
-            int targetZ = one.getBlockZ();
-            minX = Math.min(minX, targetX);
-            maxX = Math.max(maxX, targetX);
-            minY = Math.min(minY, targetY);
-            maxY = Math.max(maxY, targetY);
-            minZ = Math.min(minZ, targetZ);
-            maxZ = Math.max(maxZ, targetZ);
-        }
-
-        int height = Math.abs(maxY - minY);
-
-        // If height is 1 then its not a nether portal
-        if (height < 2)
-            return locs;
-
-        locs.add(new Vector(minX, minY, minZ));
-        locs.add(new Vector(maxX, maxY, maxZ));
-
-        return locs;
     }
 
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)

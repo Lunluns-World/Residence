@@ -11,6 +11,7 @@ import java.util.UUID;
 
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
+import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
@@ -20,6 +21,7 @@ import com.google.common.collect.HashMultimap;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeModifier;
 
+import com.bekvon.bukkit.residence.LocaleManager;
 import com.bekvon.bukkit.residence.Residence;
 import com.bekvon.bukkit.residence.containers.Flags;
 import com.bekvon.bukkit.residence.containers.lm;
@@ -29,6 +31,7 @@ import com.bekvon.bukkit.residence.protection.FlagPermissions.FlagCombo;
 import com.bekvon.bukkit.residence.protection.FlagPermissions.FlagState;
 import com.bekvon.bukkit.residence.protection.ResidencePermissions;
 
+import net.Zrips.CMILib.Colors.CMIChatColor;
 import net.Zrips.CMILib.Container.CMIText;
 import net.Zrips.CMILib.Enchants.CMIEnchantEnum;
 import net.Zrips.CMILib.GUI.CMIGuiButton;
@@ -347,7 +350,18 @@ public class setFlagInfo {
         // Can it be null?
         if (MiscInfoMeta == null)
             return miscInfo;
-        MiscInfoMeta.setDisplayName(lm.Gui_Flag_NameColor.getMessage() + CMIText.firstToUpperCase(flagName));
+        ConfigurationSection customLocale = null;
+        if (flag == null) {
+            LocaleManager locale = Residence.getInstance().getLocaleManager();
+            if (locale.getLocaleConfig() != null)
+                customLocale = locale.getLocaleConfig().getC().getConfigurationSection(locale.path + "flags.SubCommands." + flagName);
+        }
+        String translated = customLocale == null ? null : customLocale.getString("Translated");
+        if (translated != null)
+            MiscInfoMeta.setDisplayName(lm.Gui_Flag_NameColor.getMessage() + CMIChatColor.translate(translated));
+        else if (flag != null || !flagData.contains(flagName) || !MiscInfoMeta.hasDisplayName())
+            MiscInfoMeta.setDisplayName(lm.Gui_Flag_NameColor.getMessage() + CMIText.firstToUpperCase(flagName));
+
         List<String> lore = new ArrayList<String>();
         String variable = "";
         switch (state) {
@@ -363,8 +377,15 @@ public class setFlagInfo {
         }
         lore.add(lm.General_FlagState.getMessage(variable));
 
-        if (description.containsKey(flag))
+        if (description.containsKey(flag)) {
             lore.addAll(description.get(flag));
+        } else {
+            String details = customLocale == null ? null : customLocale.getString("Description");
+            if (details != null)
+                lore.add(CMIChatColor.translate("&e" + details));
+            else if (flagData.contains(flagName) && MiscInfoMeta.hasLore())
+                lore.addAll(MiscInfoMeta.getLore());
+        }
         lore.addAll(lm.Gui_Actions.getMessageList());
         MiscInfoMeta.setLore(lore);
         if (Version.isCurrentEqualOrHigher(Version.v1_20_R4))

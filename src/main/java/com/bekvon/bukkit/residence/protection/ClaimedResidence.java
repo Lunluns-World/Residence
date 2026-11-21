@@ -13,6 +13,7 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CompletableFuture;
 
 import org.bukkit.Bukkit;
@@ -243,8 +244,8 @@ public class ClaimedResidence {
     private void initialize() {
         if (this.getUniqueId() == null)
             this.uuid = UUID.randomUUID();
-        subzones = new HashMap<>();
-        areas = new HashMap<>();
+        subzones = new ConcurrentHashMap<>();
+        areas = new ConcurrentHashMap<>();
         bank = new ResidenceBank(this);
         blacklist = new ResidenceItemList(Residence.getInstance(), this, ListType.BLACKLIST);
         ignorelist = new ResidenceItemList(Residence.getInstance(), this, ListType.IGNORELIST);
@@ -538,9 +539,8 @@ public class ClaimedResidence {
         if (resevent.isCancelled())
             return false;
 
-        Residence.getInstance().getResidenceManager().removeChunkList(this);
-        addAreaByName(name, area);
-        Residence.getInstance().getResidenceManager().calculateChunks(this);
+        CuboidArea addedArea = area;
+        Residence.getInstance().getResidenceManager().updateIndexedArea(this, () -> addAreaByName(NName, addedArea));
         return true;
     }
 
@@ -729,9 +729,7 @@ public class ClaimedResidence {
             }
         }
 
-        Residence.getInstance().getResidenceManager().removeChunkList(this);
-        addAreaByName(name, newarea);
-        Residence.getInstance().getResidenceManager().calculateChunks(this);
+        Residence.getInstance().getResidenceManager().updateIndexedArea(this, () -> addAreaByName(name, newarea));
 
         lm.Area_Update.sendMessage(player);
         return true;
@@ -846,6 +844,7 @@ public class ClaimedResidence {
                 return false;
 
             subzones.put(name, newres);
+            Residence.getInstance().getResidenceManager().calculateChunks(newres);
             lm.Area_Create.sendMessage(player, NName);
             lm.Subzone_Create.sendMessage(player, NName);
 
@@ -1427,9 +1426,7 @@ public class ClaimedResidence {
     }
 
     public void removeArea(String id) {
-        Residence.getInstance().getResidenceManager().removeChunkList(this);
-        removeAreaByName(id);
-        Residence.getInstance().getResidenceManager().calculateChunks(this);
+        Residence.getInstance().getResidenceManager().updateIndexedArea(this, () -> removeAreaByName(id));
     }
 
     public void removeArea(Player player, String id, boolean resadmin) {

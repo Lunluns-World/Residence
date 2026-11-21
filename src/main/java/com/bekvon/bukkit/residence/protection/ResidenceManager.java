@@ -15,6 +15,7 @@ import java.util.TreeMap;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -69,6 +70,7 @@ public class ResidenceManager implements ResidenceInterface {
     protected ConcurrentHashMap<UUID, ClaimedResidence> residencesByUUID;
 
     protected Map<String, Map<ChunkRef, List<ClaimedResidence>>> chunkResidences;
+    private final ReentrantReadWriteLock chunkIndexLock = new ReentrantReadWriteLock();
 
     protected List<ClaimedResidence> shops = new ArrayList<ClaimedResidence>();
     private Residence plugin;
@@ -100,58 +102,67 @@ public class ResidenceManager implements ResidenceInterface {
 
     @Override
     public @Nullable ClaimedResidence getByLoc(@Nullable Location loc) {
+        chunkIndexLock.readLock().lock();
+        try {
+            if (loc == null)
+                return null;
 
-        if (loc == null)
+            World world = loc.getWorld();
+
+            if (world == null)
+                return null;
+
+            String worldName = world.getName();
+
+            if (worldName == null)
+                return null;
+
+            Map<ChunkRef, List<ClaimedResidence>> ChunkMap = chunkResidences.get(worldName);
+
+            if (ChunkMap == null)
+                return null;
+
+            List<ClaimedResidence> residences = ChunkMap.get(new ChunkRef(loc));
+
+            if (residences == null)
+                return null;
+
+            for (ClaimedResidence residence : residences) {
+                if (residence == null)
+                    continue;
+                if (!residence.containsLoc(loc))
+                    continue;
+
+                ClaimedResidence subres = residence.getSubzoneByLoc(loc);
+                return subres == null ? residence : subres;
+            }
             return null;
-
-        World world = loc.getWorld();
-
-        if (world == null)
-            return null;
-
-        String worldName = world.getName();
-
-        if (worldName == null)
-            return null;
-
-        Map<ChunkRef, List<ClaimedResidence>> ChunkMap = chunkResidences.get(worldName);
-
-        if (ChunkMap == null)
-            return null;
-
-        List<ClaimedResidence> residences = ChunkMap.get(new ChunkRef(loc));
-
-        if (residences == null)
-            return null;
-
-        for (ClaimedResidence residence : residences) {
-            if (residence == null)
-                continue;
-            if (!residence.containsLoc(loc))
-                continue;
-
-            ClaimedResidence subres = residence.getSubzoneByLoc(loc);
-            return subres == null ? residence : subres;
+        } finally {
+            chunkIndexLock.readLock().unlock();
         }
-        return null;
     }
 
     public List<ClaimedResidence> getByChunk(Chunk chunk) {
-        List<ClaimedResidence> list = new ArrayList<ClaimedResidence>();
-        if (chunk == null)
-            return list;
-        World world = chunk.getWorld();
-        if (world == null)
-            return list;
-        String worldName = world.getName();
-        if (worldName == null)
-            return list;
-        if (!chunkResidences.containsKey(worldName))
-            return list;
-        ChunkRef chunkRef = new ChunkRef(chunk.getX(), chunk.getZ());
-        Map<ChunkRef, List<ClaimedResidence>> ChunkMap = chunkResidences.get(worldName);
-        List<ClaimedResidence> ls = ChunkMap.get(chunkRef);
-        return ls == null ? list : new ArrayList<ClaimedResidence>(ls);
+        chunkIndexLock.readLock().lock();
+        try {
+            List<ClaimedResidence> list = new ArrayList<ClaimedResidence>();
+            if (chunk == null)
+                return list;
+            World world = chunk.getWorld();
+            if (world == null)
+                return list;
+            String worldName = world.getName();
+            if (worldName == null)
+                return list;
+            if (!chunkResidences.containsKey(worldName))
+                return list;
+            ChunkRef chunkRef = new ChunkRef(chunk.getX(), chunk.getZ());
+            Map<ChunkRef, List<ClaimedResidence>> ChunkMap = chunkResidences.get(worldName);
+            List<ClaimedResidence> ls = ChunkMap.get(chunkRef);
+            return ls == null ? list : new ArrayList<ClaimedResidence>(ls);
+        } finally {
+            chunkIndexLock.readLock().unlock();
+        }
     }
 
     @Override
@@ -318,6 +329,11 @@ public class ResidenceManager implements ResidenceInterface {
             newRes.setTpLoc(player, resadmin);
         }
 
+        ResidenceCreationEvent resevent = new ResidenceCreationEvent(player, resName, newRes, newArea);
+        plugin.getServ().getPluginManager().callEvent(resevent);
+        if (resevent.isCancelled())
+            return false;
+
         if (Residence.getInstance().getConfigManager().isChargeOnCreation() && !newRes.isSubzone() && plugin.getConfigManager().enableEconomy() && !resadmin && deductMoney) {
             double chargeamount = newArea.getCost(group);
 
@@ -327,11 +343,6 @@ public class ResidenceManager implements ResidenceInterface {
                 return false;
             }
         }
-
-        ResidenceCreationEvent resevent = new ResidenceCreationEvent(player, resName, newRes, newArea);
-        plugin.getServ().getPluginManager().callEvent(resevent);
-        if (resevent.isCancelled())
-            return false;
 
         residences.put(resName.toLowerCase(), newRes);
         residencesByUUID.put(newRes.getUniqueId(), newRes);
@@ -583,21 +594,25 @@ public class ResidenceManager implements ResidenceInterface {
     }
 
     public Set<ClaimedResidence> getResidences(String worldName, List<ChunkRef> chunks) {
+        chunkIndexLock.readLock().lock();
+        try {
+            Map<ChunkRef, List<ClaimedResidence>> refs = chunkResidences.get(worldName);
 
-        Map<ChunkRef, List<ClaimedResidence>> refs = chunkResidences.get(worldName);
+            Set<ClaimedResidence> resSet = new HashSet<ClaimedResidence>();
 
-        Set<ClaimedResidence> resSet = new HashSet<ClaimedResidence>();
+            if (refs == null)
+                return resSet;
 
-        if (refs == null)
+            for (ChunkRef one : chunks) {
+                List<ClaimedResidence> res = refs.get(one);
+                if (res != null)
+                    resSet.addAll(res);
+            }
+
             return resSet;
-
-        for (ChunkRef one : chunks) {
-            List<ClaimedResidence> res = refs.get(one);
-            if (res != null)
-                resSet.addAll(res);
+        } finally {
+            chunkIndexLock.readLock().unlock();
         }
-
-        return resSet;
     }
 
     public ClaimedResidence collidesWithResidence(CuboidArea newarea) {
@@ -1301,7 +1316,13 @@ public class ResidenceManager implements ResidenceInterface {
                 lm.consoleMessage("Loading " + worldName + " data into memory...");
             if (reslist != null) {
                 try {
-                    chunkResidences.put(worldName, multithreadLoadMap(worldName, reslist));
+                    Map<ChunkRef, List<ClaimedResidence>> loadedChunks = multithreadLoadMap(worldName, reslist);
+                    chunkIndexLock.writeLock().lock();
+                    try {
+                        chunkResidences.put(worldName, loadedChunks);
+                    } finally {
+                        chunkIndexLock.writeLock().unlock();
+                    }
                 } catch (Exception ex) {
                     lm.consoleMessage("Error in loading save file for world: " + worldName);
                     if (plugin.getConfigManager().stopOnSaveError())
@@ -1561,13 +1582,10 @@ public class ResidenceManager implements ResidenceInterface {
 
             newName = resevent.getNewResidenceName();
 
-            removeChunkList(res);
             res.setName(newName);
 
             residences.put(newName.toLowerCase(), res);
             residences.remove(oldName.toLowerCase());
-
-            calculateChunks(res);
 
             plugin.getSignUtil().updateSignResName(res);
 
@@ -1670,12 +1688,11 @@ public class ResidenceManager implements ResidenceInterface {
 
             cleanResidenceRecords(next, false);
 
+            removeChunkList(next);
             it.remove();
             residencesByUUID.remove(next.getUniqueId());
             count++;
         }
-        chunkResidences.remove(world);
-        chunkResidences.put(world, new HashMap<ChunkRef, List<ClaimedResidence>>());
         if (count == 0) {
             sender.sendMessage(CMIChatColor.RED + "No residences found in world: " + CMIChatColor.YELLOW + world);
         } else {
@@ -1720,20 +1737,25 @@ public class ResidenceManager implements ResidenceInterface {
     }
 
     public void removeChunkList(ClaimedResidence res) {
-        if (res == null)
-            return;
-        String world = res.getPermissions().getWorldName();
+        chunkIndexLock.writeLock().lock();
+        try {
+            if (res == null)
+                return;
+            String world = res.getPermissions().getWorldName();
 
-        Map<ChunkRef, List<ClaimedResidence>> worldChunks = chunkResidences.get(world);
+            Map<ChunkRef, List<ClaimedResidence>> worldChunks = chunkResidences.get(world);
 
-        if (worldChunks == null)
-            return;
+            if (worldChunks == null)
+                return;
 
-        for (ChunkRef chunk : res.getChunks()) {
-            List<ClaimedResidence> ress = worldChunks.get(chunk);
-            if (ress == null)
-                continue;
-            ress.remove(res);
+            for (ChunkRef chunk : res.getChunks()) {
+                List<ClaimedResidence> ress = worldChunks.get(chunk);
+                if (ress == null)
+                    continue;
+                ress.remove(res);
+            }
+        } finally {
+            chunkIndexLock.writeLock().unlock();
         }
     }
 
@@ -1748,17 +1770,39 @@ public class ResidenceManager implements ResidenceInterface {
         calculateChunks(res);
     }
 
+    void updateIndexedArea(ClaimedResidence res, Runnable update) {
+        chunkIndexLock.writeLock().lock();
+        try {
+            ClaimedResidence parent = res.getParent();
+            boolean indexed = parent == null
+                    ? residencesByUUID.get(res.getUniqueId()) == res
+                    : res.getResidenceName() != null && parent.getSubzone(res.getResidenceName()) == res;
+            if (indexed)
+                removeChunkList(res);
+            update.run();
+            if (indexed)
+                calculateChunks(res);
+        } finally {
+            chunkIndexLock.writeLock().unlock();
+        }
+    }
+
     public void calculateChunks(ClaimedResidence res) {
-        if (res == null)
-            return;
-        String world = res.getPermissions().getWorldName();
+        chunkIndexLock.writeLock().lock();
+        try {
+            if (res == null)
+                return;
+            String world = res.getPermissions().getWorldName();
 
-        Map<ChunkRef, List<ClaimedResidence>> worldChunks = chunkResidences.computeIfAbsent(world, k -> new HashMap<ChunkRef, List<ClaimedResidence>>());
+            Map<ChunkRef, List<ClaimedResidence>> worldChunks = chunkResidences.computeIfAbsent(world, k -> new HashMap<ChunkRef, List<ClaimedResidence>>());
 
-        for (ChunkRef chunk : res.getChunks()) {
-            List<ClaimedResidence> resList = worldChunks.computeIfAbsent(chunk, k -> new ArrayList<ClaimedResidence>());
-            if (!resList.contains(res))
-                resList.add(res);
+            for (ChunkRef chunk : res.getChunks()) {
+                List<ClaimedResidence> resList = worldChunks.computeIfAbsent(chunk, k -> new ArrayList<ClaimedResidence>());
+                if (!resList.contains(res))
+                    resList.add(res);
+            }
+        } finally {
+            chunkIndexLock.writeLock().unlock();
         }
     }
 

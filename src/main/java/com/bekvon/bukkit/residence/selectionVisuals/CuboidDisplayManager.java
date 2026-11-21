@@ -60,17 +60,21 @@ public class CuboidDisplayManager implements Listener {
 
         for (CuboidDisplay display : ls) {
 
-            for (CuboidDisplay cachedDisplay : data.displays) {
-                if (cachedDisplay.getArea() == display.getArea())
-                    return;
-            }
-
+            display.removeAfter(hideInSeconds);
             display.setRange(range);
             display.setGridSize(gridSize);
             display.recalculate(false);
-            display.show();
-            data.displays.add(display);
+            if (!data.displays.contains(display)) {
+                display.show();
+                data.displays.add(display);
+            }
         }
+    }
+
+    private static boolean sameArea(CMIBlockWorldArea first, CMIBlockWorldArea second) {
+        return first == second || (first.getWorld() != null && second.getWorld() != null
+                && first.getWorld().getUUID() != null && first.getWorld().getUUID().equals(second.getWorld().getUUID())
+                && first.isAreaWithinArea(second) && second.isAreaWithinArea(first));
     }
 
     public static void add(Player player, CMIBlockWorldArea area, CuboidDisplayType type, double hideInSeconds) {
@@ -78,7 +82,7 @@ public class CuboidDisplayManager implements Listener {
         PlayerData data = getPlayerData(player);
 
         for (CuboidDisplay display : data.displays) {
-            if (display.getArea() == area)
+            if (display.getType() == type && sameArea(display.getArea(), area))
                 return;
         }
         CuboidDisplay display = new CuboidDisplay(player, area);
@@ -255,21 +259,20 @@ public class CuboidDisplayManager implements Listener {
 
         PlayerData playerData = getPlayerData(player);
         List<CuboidDisplay> existing = new ArrayList<>(playerData.displays);
+        List<CMIBlockWorldArea> remaining = new ArrayList<>(areas);
+        type = type == null ? CuboidDisplayType.SELECTION : type;
 
         for (CuboidDisplay one : existing) {
-            if (!areas.contains(one.getArea()))
+            if (one.getType() != type || !remaining.removeIf(area -> sameArea(one.getArea(), area)))
                 continue;
 
-            areas.remove(one.getArea());
             one.recalculate(true);
-            one.removeAfter(type == null ? 5 : type.getHideInSeconds());
+            one.removeAfter(type.getHideInSeconds());
             cd.add(one);
         }
 
-        for (CMIBlockWorldArea area : areas) {
+        for (CMIBlockWorldArea area : remaining) {
             CuboidDisplay display = new CuboidDisplay(player, area);
-
-            type = type == null ? CuboidDisplayType.SELECTION : type;
 
             display.setType(type);
 

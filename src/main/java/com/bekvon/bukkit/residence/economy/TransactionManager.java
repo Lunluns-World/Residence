@@ -240,13 +240,27 @@ public class TransactionManager implements MarketBuyInterface {
         }
 
         if (econ.canAfford(player.getUniqueId(), amount)) {
-            if (!econ.transfer(player.getUniqueId(), res.getPermissions().getOwnerUUID(), amount)) {
-                player.sendMessage(CMIChatColor.RED + "Error, could not transfer " + amount + " from " + buyerName + " to " + sellerName);
-                return;
+            synchronized (res) {
+                if (!res.isForSell() || res.getSellPrice() != amount) {
+                    lm.Residence_NotForRentOrSell.sendMessage(player);
+                    return;
+                }
+                String sellerDisplayName = sellerName;
+                UUID sellerId = res.getOwnerUUID();
+                boolean changed = res.getPermissions().setOwner(player.getUniqueId(), true, () -> {
+                    if (!res.isForSell() || res.getSellPrice() != amount || !res.isOwner(sellerId)) {
+                        lm.Residence_NotForRentOrSell.sendMessage(player);
+                        return false;
+                    }
+                    if (econ.transfer(player.getUniqueId(), sellerId, amount))
+                        return true;
+                    player.sendMessage(CMIChatColor.RED + "Error, could not transfer " + amount + " from " + buyerName + " to " + sellerDisplayName);
+                    return false;
+                });
+                if (!changed)
+                    return;
+                removeFromSale(res);
             }
-            res.getPermissions().setOwner(player, true);
-            res.getPermissions().applyDefaultFlags();
-            removeFromSale(res);
 
             if (plugin.getConfigManager().isRemoveLwcOnBuy() && plugin.isLwcPresent())
                 ResidenceLWCListener.removeLwcFromResidence(player, res);

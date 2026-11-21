@@ -9,6 +9,8 @@ import java.util.Map.Entry;
 import java.util.Set;
 import java.util.UUID;
 
+import java.util.function.BooleanSupplier;
+
 import org.bukkit.Bukkit;
 import org.bukkit.World;
 import org.bukkit.command.CommandSender;
@@ -777,14 +779,16 @@ public class ResidencePermissions extends FlagPermissions {
     }
 
     public boolean setOwner(UUID uuid, boolean resetFlags) {
+        return setOwner(uuid, resetFlags, () -> true);
+    }
 
+    public boolean setOwner(UUID uuid, boolean resetFlags, BooleanSupplier beforeOwnershipChange) {
         String name = ResidencePlayer.getName(uuid);
 
         ResidenceOwnerChangeEvent ownerchange = new ResidenceOwnerChangeEvent(residence, name, uuid);
         Residence.getInstance().getServ().getPluginManager().callEvent(ownerchange);
 
-        // Dont change owner if event is canceled
-        if (ownerchange.isCancelled())
+        if (ownerchange.isCancelled() || !beforeOwnershipChange.getAsBoolean())
             return false;
 
         Residence.getInstance().getPlayerManager().removeResFromPlayer(residence.getOwnerUUID(), residence);

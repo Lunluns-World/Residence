@@ -135,6 +135,9 @@ public enum lm {
     Sign_TooMany("&cToo many signs for this residence"),
     Sign_ResName("&0%1"),
     Sign_Owner("&0%1"),
+    Sign_ConfirmBuy("&a[Confirm purchase]"),
+    Sign_ConfirmRent("&a[Rent without auto-renewal]"),
+    Sign_ConfirmRentAutoPay("&a[Rent with auto-renewal]"),
 
     Raid_NotEnabled("&cRaid feature is not enabled!"),
     Raid_NotIn("&cYou are not in the raid!"),

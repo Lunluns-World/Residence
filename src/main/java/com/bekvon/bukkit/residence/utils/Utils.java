@@ -373,7 +373,7 @@ public class Utils {
     }
 
     public static boolean isChorusTeleport(TeleportCause tpcause) {
-        return Version.isCurrentEqualOrHigher(Version.v1_9_0) && tpcause == TeleportCause.CHORUS_FRUIT;
+        return tpcause != null && ("CHORUS_FRUIT".equals(tpcause.name()) || "CONSUMABLE_EFFECT".equals(tpcause.name()));
     }
 
     public static List<Block> getPistonRetractBlocks(BlockPistonRetractEvent event) {
