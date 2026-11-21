@@ -645,6 +645,7 @@ public class PermissionManager {
 
                 Double max = null;
                 Double min = null;
+                p.getValues().clear();
                 for (Entry<String, Boolean> uno : all.entrySet()) {
                     if (!uno.getValue())
                         continue;
@@ -670,9 +671,9 @@ public class PermissionManager {
 
                 p.setMaxValue(max);
                 p.setMinValue(min);
+                p.setLastChecked(System.currentTimeMillis());
             }
         }
-        p.setLastChecked(System.currentTimeMillis());
         c.put(perm, p);
         cache.put(uuid, c);
         return p;
