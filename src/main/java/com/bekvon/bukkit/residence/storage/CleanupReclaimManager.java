@@ -76,10 +76,34 @@ public class CleanupReclaimManager {
 
     private final Residence plugin;
     private final ConcurrentHashMap<String, ReclaimEntry> yamlEntries = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<UUID, ReclaimEntry> cacheByResUuid = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, ReclaimEntry> cacheByServerKey = new ConcurrentHashMap<>();
     private final Object yamlLock = new Object();
 
     public CleanupReclaimManager(Residence plugin) {
         this.plugin = plugin;
+    }
+
+    private static String compositeKey(String serverName, String resKey) {
+        String srv = serverName == null ? "default" : serverName.trim().toLowerCase(Locale.ROOT);
+        String key = resKey == null ? "" : resKey.trim().toLowerCase(Locale.ROOT);
+        return srv + ":" + key;
+    }
+
+    private void putCache(ReclaimEntry entry) {
+        if (entry == null)
+            return;
+        if (entry.getResUuid() != null)
+            cacheByResUuid.put(entry.getResUuid(), entry);
+        cacheByServerKey.put(compositeKey(entry.getServerName(), entry.getResKey()), entry);
+    }
+
+    private void removeCache(ReclaimEntry entry) {
+        if (entry == null)
+            return;
+        if (entry.getResUuid() != null)
+            cacheByResUuid.remove(entry.getResUuid());
+        cacheByServerKey.remove(compositeKey(entry.getServerName(), entry.getResKey()));
     }
 
     private boolean isDatabaseReady() {
@@ -93,9 +117,82 @@ public class CleanupReclaimManager {
 
     public void load() {
         yamlEntries.clear();
-        if (!isDatabaseReady()) {
+        cacheByResUuid.clear();
+        cacheByServerKey.clear();
+        if (isDatabaseReady()) {
+            refreshCacheFromDatabaseNow();
+        } else {
             loadYaml();
+            for (ReclaimEntry entry : yamlEntries.values()) {
+                putCache(entry);
+            }
         }
+    }
+
+    public void refreshCacheFromDatabaseNow() {
+        DatabaseStorageManager db = plugin.getDatabaseStorageManager();
+        if (db == null || !db.isInitialized())
+            return;
+        try {
+            List<ReclaimEntry> all = db.loadAllCleanupReclaims();
+            ConcurrentHashMap<UUID, ReclaimEntry> newByUuid = new ConcurrentHashMap<>();
+            ConcurrentHashMap<String, ReclaimEntry> newByKey = new ConcurrentHashMap<>();
+            for (ReclaimEntry entry : all) {
+                if (entry.getResUuid() != null)
+                    newByUuid.put(entry.getResUuid(), entry);
+                newByKey.put(compositeKey(entry.getServerName(), entry.getResKey()), entry);
+            }
+            cacheByResUuid.clear();
+            cacheByResUuid.putAll(newByUuid);
+            cacheByServerKey.clear();
+            cacheByServerKey.putAll(newByKey);
+        } catch (SQLException ex) {
+            plugin.getLogger().log(Level.WARNING, "Failed to refresh cleanup reclaim cache from database", ex);
+        }
+    }
+
+    public boolean isArchivedHolder(String ownerName) {
+        if (ownerName == null || !plugin.getConfigManager().isAutoCleanTrasnferToUser())
+            return false;
+        String holder = plugin.getConfigManager().getAutoCleanUserName();
+        return holder != null && !holder.trim().isEmpty() && ownerName.equalsIgnoreCase(holder);
+    }
+
+    public ReclaimEntry getArchivedEntry(ClaimedResidence res) {
+        if (res == null)
+            return null;
+        return getArchivedEntry(plugin.getStorageServerName(), res.getName(), res.getUniqueId());
+    }
+
+    public ReclaimEntry getArchivedEntry(String serverName, String resName, UUID resUuid) {
+        if (resUuid != null) {
+            ReclaimEntry byUuid = cacheByResUuid.get(resUuid);
+            if (byUuid != null)
+                return byUuid;
+        }
+        if (resName != null) {
+            ReclaimEntry byKey = cacheByServerKey.get(compositeKey(serverName, resName));
+            if (byKey != null && (resUuid == null || byKey.getResUuid() == null || resUuid.equals(byKey.getResUuid()))) {
+                return byKey;
+            }
+        }
+        return null;
+    }
+
+    public String formatArchivedInfoLine(ClaimedResidence res) {
+        if (res == null || !isArchivedHolder(res.getOwner()))
+            return null;
+        return formatArchivedInfoLine(plugin.getStorageServerName(), res.getName(), res.getUniqueId(), res.getOwner());
+    }
+
+    public String formatArchivedInfoLine(String serverName, String resName, UUID resUuid, String currentOwner) {
+        if (!isArchivedHolder(currentOwner))
+            return null;
+        ReclaimEntry archived = getArchivedEntry(serverName, resName, resUuid);
+        if (archived != null && !archived.getOriginalOwnerName().isEmpty()) {
+            return lm.Residence_ArchivedInfo.getMessage(archived.getOriginalOwnerName());
+        }
+        return lm.Residence_ArchivedInfoUnknown.getMessage();
     }
 
     public void recordArchived(ClaimedResidence res, UUID originalOwnerUuid, String originalOwnerName) {
@@ -107,6 +204,7 @@ public class CleanupReclaimManager {
         UUID resUuid = res.getUniqueId();
         long archivedAt = System.currentTimeMillis();
         ReclaimEntry entry = new ReclaimEntry(serverName, resKey, resName, resUuid, originalOwnerUuid, originalOwnerName, archivedAt);
+        putCache(entry);
 
         if (isDatabaseReady()) {
             try {
@@ -253,6 +351,9 @@ public class CleanupReclaimManager {
     private void deleteEntriesAsync(List<ReclaimEntry> entries) {
         if (entries == null || entries.isEmpty())
             return;
+        for (ReclaimEntry entry : entries) {
+            removeCache(entry);
+        }
         if (isDatabaseReady()) {
             DatabaseStorageManager db = plugin.getDatabaseStorageManager();
             List<ReclaimEntry> copy = new ArrayList<>(entries);

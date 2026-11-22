@@ -1011,8 +1011,16 @@ public class ResidenceManager implements ResidenceInterface {
         ResidencePermissions perms = res.getPermissions();
 
         String resNameOwner = lm.Residence_Line.getMessage(areaname);
-        resNameOwner += lm.General_Owner.getMessage(perms.getOwner());
-        if (plugin.getConfigManager().enableEconomy() && (res.isOwner(sender) || !(sender instanceof Player) || resadmin))
+        String archivedInfo = plugin.getCleanupReclaimManager() != null
+                ? plugin.getCleanupReclaimManager().formatArchivedInfoLine(res)
+                : null;
+        if (archivedInfo != null) {
+            resNameOwner += archivedInfo;
+        } else {
+            resNameOwner += lm.General_Owner.getMessage(perms.getOwner());
+        }
+        if (plugin.getConfigManager().enableEconomy() && plugin.getConfigManager().isBankEnabled()
+                && (res.isOwner(sender) || !(sender instanceof Player) || resadmin))
             resNameOwner += lm.Bank_Name.getMessage(res.getBank().getStoredMoneyFormated());
 
         resNameOwner = CMIChatColor.translate(resNameOwner);

@@ -304,6 +304,8 @@ public enum lm {
     Residence_In("&eYou are standing in Residence &6%1"),
     Residence_OwnerChange("&eResidence &6%1 &eowner changed to &6%2"),
     Residence_CleanupRestored("&aWelcome back! Your archived residence(s) &e%1 &ahave been automatically restored with original settings."),
+    Residence_ArchivedInfo("&eStatus: &cInactive - System Archived &7(Original Owner: &6%1&7)"),
+    Residence_ArchivedInfoUnknown("&eStatus: &cInactive - System Archived"),
     Residence_NonAdmin("&cYou are not a Residence admin."),
     Residence_Line("&eResidence: &6%1 "),
     Residence_RentedBy("&eRented by: &6%1"),
