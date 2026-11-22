@@ -243,6 +243,7 @@ public class Residence extends JavaPlugin {
     private String storageServerName;
     private CrossServerManager crossServerManager = null;
     private ResidenceGuiMetaManager guiMetaManager = null;
+    private com.bekvon.bukkit.residence.storage.PlayerLimitManager playerLimitManager = null;
     private ResidenceListGui residenceListGui = null;
 
     public DatabaseStorageManager getDatabaseStorageManager() {
@@ -395,6 +396,7 @@ public class Residence extends JavaPlugin {
         }
 
         if (crossServerManager != null) {
+            crossServerManager.flushOnlinePlayerActivityNow();
             crossServerManager.stop();
         }
 
@@ -403,6 +405,9 @@ public class Residence extends JavaPlugin {
                 saveYml();
                 if (guiMetaManager != null && (databaseStorageManager == null || !databaseStorageManager.isInitialized())) {
                     guiMetaManager.saveYaml();
+                }
+                if (playerLimitManager != null && (databaseStorageManager == null || !databaseStorageManager.isInitialized())) {
+                    playerLimitManager.saveYaml();
                 }
                 if (zip != null)
                     zip.backup();
@@ -630,6 +635,7 @@ public class Residence extends JavaPlugin {
             }
 
             getGuiMetaManager().load();
+            getPlayerLimitManager().load();
             if (getCrossServerManager().isEnabled()) {
                 databaseStorageManager.syncLocalServerIndex(getStorageServerName(), getCrossServerManager().buildLocalEntriesSnapshot());
                 databaseStorageManager.clearResidenceReservations(getStorageServerName());
@@ -638,8 +644,14 @@ public class Residence extends JavaPlugin {
 
             getSignUtil().LoadSigns();
 
-            if (getConfigManager().isUseResidenceFileClean())
+            if (getConfigManager().isUseResidenceFileClean()) {
+                if (databaseStorageManager != null && databaseStorageManager.isInitialized()) {
+                    getCrossServerManager().seedLocalPlayerActivityNow();
+                }
                 (new FileCleanUp(this)).cleanOldResidence();
+            } else if (databaseStorageManager != null && databaseStorageManager.isInitialized()) {
+                getCrossServerManager().seedLocalPlayerActivityAsync();
+            }
 
             if (firstenable) {
                 if (!this.isEnabled()) {
@@ -1080,12 +1092,22 @@ public class Residence extends JavaPlugin {
         }
     }
 
+    public com.bekvon.bukkit.residence.storage.PlayerLimitManager getPlayerLimitManager() {
+        if (playerLimitManager == null)
+            playerLimitManager = new com.bekvon.bukkit.residence.storage.PlayerLimitManager(this);
+        return playerLimitManager;
+    }
+
     public void reloadDatabaseAndCrossServer() {
         if (crossServerManager != null) {
+            crossServerManager.flushOnlinePlayerActivityNow();
             crossServerManager.stop();
         }
         if (guiMetaManager != null) {
             guiMetaManager.load();
+        }
+        if (playerLimitManager != null) {
+            playerLimitManager.load();
         }
         getCrossServerManager().start();
     }
@@ -1158,6 +1180,14 @@ public class Residence extends JavaPlugin {
             moveAtomicallyOrReplace(temporary, file);
         } finally {
             Files.deleteIfExists(temporary);
+        }
+    }
+
+    public void saveResidenceDataNow() {
+        try {
+            saveYml();
+        } catch (Exception ex) {
+            getLogger().log(Level.WARNING, "Failed to persist residence data after cleanup", ex);
         }
     }
 

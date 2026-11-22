@@ -244,9 +244,10 @@ public class auto implements cmd {
 
         int groupMaxX = rPlayer.getMaxX();
         int groupMaxZ = rPlayer.getMaxZ();
+        int groupMaxY = rPlayer.getMaxY();
 
         int maxX = getMax(groupMaxX);
-        int maxY = getMax(group.getMaxYSize());
+        int maxY = getMax(groupMaxY);
         int maxZ = getMax(groupMaxZ);
 
         if (maxX > max && max > 0)
@@ -260,7 +261,7 @@ public class auto implements cmd {
             maxX = (rPlayer.getMaxX() - group.getMinX()) / 2 + group.getMinX();
 
         if (maxY <= 1)
-            maxY = (group.getMaxYSize() - group.getMinYSize()) / 2 + group.getMinYSize();
+            maxY = (groupMaxY - group.getMinYSize()) / 2 + group.getMinYSize();
 
         if (maxZ <= 1)
             maxZ = (rPlayer.getMaxZ() - group.getMinZ()) / 2 + group.getMinZ();
@@ -327,7 +328,7 @@ public class auto implements cmd {
                 continue;
             }
 
-            if (!SelectionManager.isIgnoreY() && (maxY > 0 && maxY < c.getYSize() || c.getYSize() > group.getMaxYSize() + (-group.getMinYSize()))) {
+            if (!SelectionManager.isIgnoreY() && (maxY > 0 && maxY < c.getYSize() || c.getYSize() > groupMaxY + (-group.getMinYSize()))) {
                 locked.add(dir);
                 dir = dir.getNext();
                 skipped++;
@@ -365,7 +366,7 @@ public class auto implements cmd {
 
         cuboid = plugin.getSelectionManager().getSelectionCuboid(player);
 
-        if (cuboid.getXSize() > groupMaxX || cuboid.getYSize() > group.getMaxYSize() + (-group.getMinYSize()) || cuboid.getZSize() > groupMaxZ) {
+        if (cuboid.getXSize() > groupMaxX || cuboid.getYSize() > groupMaxY + (-group.getMinYSize()) || cuboid.getZSize() > groupMaxZ) {
             return failReason.area;
         }
 
@@ -409,11 +410,11 @@ public class auto implements cmd {
         int skipped = 0;
         int done = 0;
 
-        int maxWorldY = group.getMaxYSize();
+        int maxWorldY = rPlayer.getMaxY();
 
         int groupMaxX = rPlayer.getMaxX();
         int groupMaxZ = rPlayer.getMaxZ();
-        int groupMaxY = group.getMaxYSize();
+        int groupMaxY = rPlayer.getMaxY();
 
         int maxX = getMax(groupMaxX);
         int maxY = getMax(groupMaxY);
@@ -436,7 +437,7 @@ public class auto implements cmd {
             maxX = (groupMaxX - group.getMinX()) / 2 + group.getMinX();
 
         if (maxY <= 1)
-            maxY = (group.getMaxYSize() - group.getMinYSize()) / 2 + group.getMinYSize();
+            maxY = (groupMaxY - group.getMinYSize()) / 2 + group.getMinYSize();
 
         if (maxZ <= 1)
             maxZ = (groupMaxZ - group.getMinZ()) / 2 + group.getMinZ();
@@ -522,7 +523,7 @@ public class auto implements cmd {
                 break;
             }
 
-            if (!SelectionManager.isIgnoreY() && (maxY > 0 && maxY < c.getYSize() || c.getYSize() > group.getMaxYSize() + (-group.getMinYSize()))) {
+            if (!SelectionManager.isIgnoreY() && (maxY > 0 && maxY < c.getYSize() || c.getYSize() > groupMaxY + (-group.getMinYSize()))) {
                 break;
             }
 

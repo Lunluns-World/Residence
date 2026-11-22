@@ -82,6 +82,8 @@ public class CrossServerManager {
         syncTask = Bukkit.getAsyncScheduler().runAtFixedRate(plugin, task -> {
             if (plugin.getGuiMetaManager() != null)
                 plugin.getGuiMetaManager().refreshFromDatabaseNow();
+            if (plugin.getPlayerLimitManager() != null)
+                plugin.getPlayerLimitManager().refreshAllFromDatabaseNow();
             syncLocalIndexNow();
             refreshRemoteCacheNow();
         }, intervalSeconds, intervalSeconds, TimeUnit.SECONDS);
@@ -439,6 +441,88 @@ public class CrossServerManager {
                     sendProxyConnect(player, entry.getServerName());
             }, null);
         });
+    }
+
+    public void recordPlayerActivityAsync(Player player) {
+        if (player == null)
+            return;
+        DatabaseStorageManager db = plugin.getDatabaseStorageManager();
+        if (db == null || !db.isInitialized())
+            return;
+        UUID uuid = player.getUniqueId();
+        String name = player.getName();
+        long now = System.currentTimeMillis();
+        String server = plugin.getStorageServerName();
+        if (!plugin.isEnabled()) {
+            try {
+                db.upsertPlayerActivity(uuid, name, now, server);
+            } catch (SQLException ex) {
+                plugin.getLogger().log(Level.WARNING, "Failed to update player activity for " + name, ex);
+            }
+            return;
+        }
+        Bukkit.getAsyncScheduler().runNow(plugin, task -> {
+            try {
+                db.upsertPlayerActivity(uuid, name, now, server);
+            } catch (SQLException ex) {
+                plugin.getLogger().log(Level.WARNING, "Failed to update player activity for " + name, ex);
+            }
+        });
+    }
+
+    public void flushOnlinePlayerActivityNow() {
+        DatabaseStorageManager db = plugin.getDatabaseStorageManager();
+        if (db == null || !db.isInitialized())
+            return;
+        Map<UUID, Long> lastSeenMap = new java.util.HashMap<>();
+        Map<UUID, String> namesMap = new java.util.HashMap<>();
+        long now = System.currentTimeMillis();
+        for (Player online : Bukkit.getOnlinePlayers()) {
+            if (online == null || online.getUniqueId() == null)
+                continue;
+            lastSeenMap.put(online.getUniqueId(), now);
+            namesMap.put(online.getUniqueId(), online.getName());
+        }
+        if (lastSeenMap.isEmpty())
+            return;
+        try {
+            db.upsertPlayerActivitiesBatch(lastSeenMap, namesMap, plugin.getStorageServerName());
+        } catch (SQLException ex) {
+            plugin.getLogger().log(Level.WARNING, "Failed to flush online player activity on disable", ex);
+        }
+    }
+
+    public void seedLocalPlayerActivityNow() {
+        DatabaseStorageManager db = plugin.getDatabaseStorageManager();
+        if (db == null || !db.isInitialized())
+            return;
+        Map<UUID, Long> lastSeenMap = new java.util.HashMap<>();
+        Map<UUID, String> namesMap = new java.util.HashMap<>();
+        long now = System.currentTimeMillis();
+        for (org.bukkit.OfflinePlayer off : Bukkit.getOfflinePlayers()) {
+            if (off == null || off.getUniqueId() == null)
+                continue;
+            long ts = off.isOnline() ? now : off.getLastPlayed();
+            if (ts > 0L) {
+                lastSeenMap.put(off.getUniqueId(), ts);
+                if (off.getName() != null)
+                    namesMap.put(off.getUniqueId(), off.getName());
+            }
+        }
+        if (lastSeenMap.isEmpty())
+            return;
+        try {
+            db.upsertPlayerActivitiesBatch(lastSeenMap, namesMap, plugin.getStorageServerName());
+        } catch (SQLException ex) {
+            plugin.getLogger().log(Level.WARNING, "Failed to seed local player activity into database", ex);
+        }
+    }
+
+    public void seedLocalPlayerActivityAsync() {
+        DatabaseStorageManager db = plugin.getDatabaseStorageManager();
+        if (db == null || !db.isInitialized())
+            return;
+        Bukkit.getAsyncScheduler().runNow(plugin, task -> seedLocalPlayerActivityNow());
     }
 
     public void handlePlayerJoinArrival(Player player) {

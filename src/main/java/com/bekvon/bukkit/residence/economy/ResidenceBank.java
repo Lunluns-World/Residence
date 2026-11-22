@@ -67,7 +67,9 @@ public class ResidenceBank {
         if (!(sender instanceof Player))
             return;
         Player player = (Player) sender;
-        if (!Residence.getInstance().getConfigManager().enableEconomy() || Residence.getInstance().getEconomyManager() == null) {
+        if (!Residence.getInstance().getConfigManager().isBankEnabled()
+                || !Residence.getInstance().getConfigManager().enableEconomy()
+                || Residence.getInstance().getEconomyManager() == null) {
             lm.Economy_MarketDisabled.sendMessage(sender);
             return;
         }
@@ -105,7 +107,9 @@ public class ResidenceBank {
             return;
 
         Player player = (Player) sender;
-        if (!Residence.getInstance().getConfigManager().enableEconomy() || Residence.getInstance().getEconomyManager() == null) {
+        if (!Residence.getInstance().getConfigManager().isBankEnabled()
+                || !Residence.getInstance().getConfigManager().enableEconomy()
+                || Residence.getInstance().getEconomyManager() == null) {
             lm.Economy_MarketDisabled.sendMessage(sender);
             return;
         }
@@ -138,7 +142,9 @@ public class ResidenceBank {
 
     public void showBalance(CommandSender sender, boolean resadmin) {
 
-        if (!Residence.getInstance().getConfigManager().enableEconomy() || Residence.getInstance().getEconomyManager() == null) {
+        if (!Residence.getInstance().getConfigManager().isBankEnabled()
+                || !Residence.getInstance().getConfigManager().enableEconomy()
+                || Residence.getInstance().getEconomyManager() == null) {
             lm.Economy_MarketDisabled.sendMessage(sender);
             return;
         }

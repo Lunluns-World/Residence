@@ -149,7 +149,9 @@ public class ResidencePlayer {
 
     public int getMaxRents() {
         recountMaxRents();
-        return getMaxData().getMaxRents();
+        int base = getMaxData().getMaxRents();
+        com.bekvon.bukkit.residence.storage.PlayerLimitManager lm = Residence.getInstance().getPlayerLimitManager();
+        return lm != null ? lm.applyLimit(getUniqueId(), com.bekvon.bukkit.residence.storage.PlayerLimitManager.LimitType.RENTS, base) : base;
     }
 
     public void recountMaxSubzones() {
@@ -168,7 +170,9 @@ public class ResidencePlayer {
 
     public int getMaxSubzones() {
         recountMaxSubzones();
-        return getMaxData().getMaxSubzones();
+        int base = getMaxData().getMaxSubzones();
+        com.bekvon.bukkit.residence.storage.PlayerLimitManager lm = Residence.getInstance().getPlayerLimitManager();
+        return lm != null ? lm.applyLimit(getUniqueId(), com.bekvon.bukkit.residence.storage.PlayerLimitManager.LimitType.SUBZONES, base) : base;
     }
 
     public void recountMaxSubzoneDepth() {
@@ -194,28 +198,32 @@ public class ResidencePlayer {
     public int getMaxRes() {
         recountMaxRes();
         PermissionGroup g = getGroup();
-        if (getMaxData().getMaxRes() < g.getMaxZones()) {
-            return g.getMaxZones();
-        }
-        return getMaxData().getMaxRes();
+        int base = Math.max(getMaxData().getMaxRes(), g.getMaxZones());
+        com.bekvon.bukkit.residence.storage.PlayerLimitManager lm = Residence.getInstance().getPlayerLimitManager();
+        return lm != null ? lm.applyLimit(getUniqueId(), com.bekvon.bukkit.residence.storage.PlayerLimitManager.LimitType.RES, base) : base;
     }
 
     public int getMaxX() {
         recountMaxX();
         PermissionGroup g = getGroup();
-        if (getMaxData().getMaxX() < g.getMaxX()) {
-            return g.getMaxX();
-        }
-        return getMaxData().getMaxX();
+        int base = Math.max(getMaxData().getMaxX(), g.getMaxX());
+        com.bekvon.bukkit.residence.storage.PlayerLimitManager lm = Residence.getInstance().getPlayerLimitManager();
+        return lm != null ? lm.applyLimit(getUniqueId(), com.bekvon.bukkit.residence.storage.PlayerLimitManager.LimitType.X, base) : base;
+    }
+
+    public int getMaxY() {
+        PermissionGroup g = getGroup();
+        int base = g.getMaxYSize();
+        com.bekvon.bukkit.residence.storage.PlayerLimitManager lm = Residence.getInstance().getPlayerLimitManager();
+        return lm != null ? lm.applyLimit(getUniqueId(), com.bekvon.bukkit.residence.storage.PlayerLimitManager.LimitType.Y, base) : base;
     }
 
     public int getMaxZ() {
         recountMaxZ();
         PermissionGroup g = getGroup();
-        if (getMaxData().getMaxZ() < g.getMaxZ()) {
-            return g.getMaxZ();
-        }
-        return getMaxData().getMaxZ();
+        int base = Math.max(getMaxData().getMaxZ(), g.getMaxZ());
+        com.bekvon.bukkit.residence.storage.PlayerLimitManager lm = Residence.getInstance().getPlayerLimitManager();
+        return lm != null ? lm.applyLimit(getUniqueId(), com.bekvon.bukkit.residence.storage.PlayerLimitManager.LimitType.Z, base) : base;
     }
 
     public PermissionGroup getGroup() {

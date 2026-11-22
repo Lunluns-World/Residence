@@ -800,11 +800,15 @@ public class RentManager implements MarketRentInterface {
 
             if (renterUUID != null && land.AutoPay && rentable.AllowAutoPay) {
 
+                boolean bankEnabled = plugin.getConfigManager().isBankEnabled();
+                boolean deductBankThenPlayer = bankEnabled && plugin.getConfigManager().isDeductFromBankThenPlayer();
+                boolean deductBankOnly = bankEnabled && plugin.getConfigManager().isDeductFromBank();
+
                 Double money = 0D;
-                if (plugin.getConfigManager().isDeductFromBankThenPlayer()) {
+                if (deductBankThenPlayer) {
                     money += res.getBank().getStoredMoneyD();
                     money += plugin.getEconomyManager().getBalance(renterUUID);
-                } else if (plugin.getConfigManager().isDeductFromBank()) {
+                } else if (deductBankOnly) {
                     money += res.getBank().getStoredMoneyD();
                 } else {
                     money += plugin.getEconomyManager().getBalance(renterUUID);
@@ -816,7 +820,7 @@ public class RentManager implements MarketRentInterface {
                 } else {
 
                     boolean updatedTime = false;
-                    if (plugin.getConfigManager().isDeductFromBankThenPlayer()) {
+                    if (deductBankThenPlayer) {
                         double deductFromPlayer = rentable.cost;
                         double leftInBank = res.getBank().getStoredMoneyD();
                         if (leftInBank < deductFromPlayer) {
@@ -837,7 +841,7 @@ public class RentManager implements MarketRentInterface {
                                 updatedTime = true;
                             }
                         }
-                    } else if (plugin.getConfigManager().isDeductFromBank()) {
+                    } else if (deductBankOnly) {
                         double deductFromPlayer = rentable.cost;
                         double leftInBank = res.getBank().getStoredMoneyD();
                         if (leftInBank < deductFromPlayer) {

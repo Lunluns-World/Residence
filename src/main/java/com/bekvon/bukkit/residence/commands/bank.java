@@ -33,6 +33,11 @@ public class bank implements cmd {
     @CommandAnnotation(simple = true, priority = 3400, regVar = { 1, 2, 3 }, consoleVar = { 2, 3 })
     public Boolean perform(Residence plugin, CommandSender sender, String[] args, boolean resadmin) {
 
+        if (!plugin.getConfigManager().isBankEnabled()) {
+            lm.Economy_MarketDisabled.sendMessage(sender);
+            return true;
+        }
+
         String resName = null;
         ClaimedResidence res = null;
         Action action = null;

@@ -266,6 +266,7 @@ public class ConfigManager {
     public static int RaidPlayerCooldown = 120;
     // Raid
 
+    private boolean bankEnabled = true;
     public double BankCapacity = 0D;
     // Schematics
     public boolean RestoreAfterRentEnds;
@@ -1146,6 +1147,9 @@ public class ConfigManager {
                 "Keep in mind that when its set to false, there is slightly bigger server load as it has to save area each time when some one rents it");
         SchematicsSaveOnFlagChange = c.get("Global.Rent.Schematics.SaveOnFlagChange", true);
 
+        c.addComment("Global.Bank.Enabled", "Enable or disable the Residence Bank system (/res bank and bank rent deduction)");
+        bankEnabled = c.get("Global.Bank.Enabled", true);
+
         c.addComment("Global.Bank.Capacity", "Defines max amount residence bank can hold", "Setting to 0 will disable limitations");
         BankCapacity = c.get("Global.Bank.Capacity", 0D);
 
@@ -1696,6 +1700,10 @@ public class ConfigManager {
 
     public boolean isRemoveLwcOnDelete() {
         return LwcOnDelete;
+    }
+
+    public boolean isBankEnabled() {
+        return bankEnabled;
     }
 
     public boolean isUseResidenceFileClean() {

@@ -94,7 +94,7 @@ public class Schematics7Manager implements WESchematicManager {
             }
 
             // Keep only 3 newest versions
-            File[] files = schematicsDir.listFiles((dir, name) -> name.startsWith(baseName + "_") && name.endsWith(".schem"));
+            File[] files = listResidenceSchematics(schematicsDir, baseName);
             if (files != null && files.length > 3) {
                 Arrays.sort(files, (a, b) -> Long.compare(b.lastModified(), a.lastModified()));
                 for (int i = 3; i < files.length; i++) {
@@ -110,9 +110,21 @@ public class Schematics7Manager implements WESchematicManager {
         return true;
     }
 
+    private static File[] listResidenceSchematics(File schematicsDir, String baseName) {
+        if (schematicsDir == null || !schematicsDir.exists() || !schematicsDir.isDirectory() || baseName == null)
+            return null;
+        String prefix = baseName + "_";
+        return schematicsDir.listFiles((dir, name) -> {
+            if (!name.startsWith(prefix) || !name.endsWith(".schem"))
+                return false;
+            String ts = name.substring(prefix.length(), name.length() - 6);
+            return ts.matches("\\d{8}_\\d{6}");
+        });
+    }
+
     @Override
     public boolean load(ClaimedResidence residence) {
-        return load(residence, 0);
+        return load(residence, 1);
     }
 
     public boolean load(ClaimedResidence residence, int versionIndex) {
@@ -126,7 +138,7 @@ public class Schematics7Manager implements WESchematicManager {
         File schematicsDir = new File(plugin.getDataLocation(), "Schematics" + File.separator + residence.getWorldName());
 
         String baseName = residence.getName();
-        File[] files = schematicsDir.listFiles((dir, name) -> name.startsWith(baseName + "_") && name.endsWith(".schem"));
+        File[] files = listResidenceSchematics(schematicsDir, baseName);
 
         if (files == null || files.length == 0 || versionIndex < 1 || versionIndex > files.length)
             return false;
@@ -198,7 +210,7 @@ public class Schematics7Manager implements WESchematicManager {
             return false;
 
         String baseName = res.getName();
-        File[] files = schematicsDir.listFiles((dir, name) -> name.startsWith(baseName + "_") && name.endsWith(".schem"));
+        File[] files = listResidenceSchematics(schematicsDir, baseName);
 
         boolean deletedAny = false;
         if (files != null) {
@@ -223,7 +235,7 @@ public class Schematics7Manager implements WESchematicManager {
             return false;
 
         String baseName = res.getName();
-        File[] files = schematicsDir.listFiles((dir, name) -> name.startsWith(baseName + "_") && name.endsWith(".schem"));
+        File[] files = listResidenceSchematics(schematicsDir, baseName);
         if (files == null || files.length == 0)
             return false;
 
@@ -252,7 +264,7 @@ public class Schematics7Manager implements WESchematicManager {
             return java.util.Collections.emptyList();
 
         String baseName = res.getName();
-        File[] files = schematicsDir.listFiles((dir, name) -> name.startsWith(baseName + "_") && name.endsWith(".schem"));
+        File[] files = listResidenceSchematics(schematicsDir, baseName);
 
         if (files == null || files.length == 0)
             return java.util.Collections.emptyList();
