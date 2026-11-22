@@ -332,8 +332,8 @@ public class ClaimedResidence {
             return false;
         }
 
-        if (!SelectionManager.isIgnoreY() && area.getYSize() > group.getMaxYSize()) {
-            lm.Area_ToBigY.sendMessage(player, area.getYSize(), group.getMaxYSize());
+        if (!SelectionManager.isIgnoreY() && area.getYSize() > rPlayer.getMaxY()) {
+            lm.Area_ToBigY.sendMessage(player, area.getYSize(), rPlayer.getMaxY());
             return false;
         }
 

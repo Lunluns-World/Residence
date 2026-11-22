@@ -43,6 +43,7 @@ public class Placeholder {
         residence_user_main_name,
         residence_user_main_owner,
         residence_user_amount,
+        residence_user_global_amount,
         residence_user_group,
         residence_user_admin,
         residence_user_cancreate,
@@ -50,6 +51,15 @@ public class Placeholder {
         residence_user_maxew,
         residence_user_maxns,
         residence_user_maxud,
+        residence_user_max_x,
+        residence_user_max_y,
+        residence_user_max_z,
+        residence_user_extra_res,
+        residence_user_extra_x,
+        residence_user_extra_y,
+        residence_user_extra_z,
+        residence_user_extra_subzones,
+        residence_user_extra_rents,
         residence_user_maxsub,
         residence_user_maxsubdepth,
         residence_user_maxrents,
@@ -436,8 +446,43 @@ public class Placeholder {
                     break;
                 case residence_user_maxud:
                     group = user.getGroup();
-                    result = group.getMinYSize() + "-" + group.getMaxYSize();
+                    result = group.getMinYSize() + "-" + user.getMaxY();
                     break;
+                case residence_user_max_x:
+                    result = String.valueOf(user.getMaxX());
+                    break;
+                case residence_user_max_y:
+                    result = String.valueOf(user.getMaxY());
+                    break;
+                case residence_user_max_z:
+                    result = String.valueOf(user.getMaxZ());
+                    break;
+                case residence_user_extra_res:
+                    result = String.valueOf(plugin.getPlayerLimitManager().getExtra(user.getUniqueId(), com.bekvon.bukkit.residence.storage.PlayerLimitManager.LimitType.RES));
+                    break;
+                case residence_user_extra_x:
+                    result = String.valueOf(plugin.getPlayerLimitManager().getExtra(user.getUniqueId(), com.bekvon.bukkit.residence.storage.PlayerLimitManager.LimitType.X));
+                    break;
+                case residence_user_extra_y:
+                    result = String.valueOf(plugin.getPlayerLimitManager().getExtra(user.getUniqueId(), com.bekvon.bukkit.residence.storage.PlayerLimitManager.LimitType.Y));
+                    break;
+                case residence_user_extra_z:
+                    result = String.valueOf(plugin.getPlayerLimitManager().getExtra(user.getUniqueId(), com.bekvon.bukkit.residence.storage.PlayerLimitManager.LimitType.Z));
+                    break;
+                case residence_user_extra_subzones:
+                    result = String.valueOf(plugin.getPlayerLimitManager().getExtra(user.getUniqueId(), com.bekvon.bukkit.residence.storage.PlayerLimitManager.LimitType.SUBZONES));
+                    break;
+                case residence_user_extra_rents:
+                    result = String.valueOf(plugin.getPlayerLimitManager().getExtra(user.getUniqueId(), com.bekvon.bukkit.residence.storage.PlayerLimitManager.LimitType.RENTS));
+                    break;
+                case residence_user_global_amount: {
+                    int total = user.getResAmount();
+                    if (plugin.getCrossServerManager() != null && plugin.getCrossServerManager().usesGlobalQuota()) {
+                        total += plugin.getCrossServerManager().getRemoteResidenceCount(user.getUniqueId());
+                    }
+                    result = String.valueOf(total);
+                    break;
+                }
                 case residence_user_current_owner:
                     ClaimedResidence res = plugin.getResidenceManager().getByLoc(user.getPlayer().getLocation());
                     result = res == null ? "" : res.getOwner();

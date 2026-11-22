@@ -581,7 +581,7 @@ public class PermissionGroup {
         lm.Limits_NumberOwn.sendMessage(sender, ownedCount);
         lm.Limits_MaxEW.sendMessage(sender, group.getMinX() + "-" + rPlayer.getMaxX());
         lm.Limits_MaxNS.sendMessage(sender, group.getMinZ() + "-" + rPlayer.getMaxZ());
-        lm.Limits_MaxUD.sendMessage(sender, group.getMinYSize() + "-" + group.getMaxYSize());
+        lm.Limits_MaxUD.sendMessage(sender, group.getMinYSize() + "-" + rPlayer.getMaxY());
         lm.Limits_MinMax.sendMessage(sender, group.getLowestYAllowed(), group.getHighestYAllowed());
         lm.Limits_MaxSubzones.sendMessage(sender, rPlayer.getMaxSubzones());
         lm.Limits_MaxSubDepth.sendMessage(sender, rPlayer.getMaxSubzoneDepth());

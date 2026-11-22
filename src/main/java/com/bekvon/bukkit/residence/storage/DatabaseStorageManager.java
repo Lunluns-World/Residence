@@ -319,6 +319,31 @@ public class DatabaseStorageManager {
                     + "created_at BIGINT NOT NULL,"
                     + "expires_at BIGINT NOT NULL"
                     + ")");
+
+            st.executeUpdate("CREATE TABLE IF NOT EXISTS " + tablePrefix + "player_activity ("
+                    + "player_uuid VARCHAR(36) NOT NULL PRIMARY KEY,"
+                    + "player_name VARCHAR(64),"
+                    + "last_seen BIGINT NOT NULL,"
+                    + "last_server VARCHAR(64) NOT NULL"
+                    + ")");
+
+            st.executeUpdate("CREATE TABLE IF NOT EXISTS " + tablePrefix + "player_limits ("
+                    + "player_uuid VARCHAR(36) NOT NULL PRIMARY KEY,"
+                    + "player_name VARCHAR(64),"
+                    + "extra_res INT NOT NULL DEFAULT 0,"
+                    + "extra_x INT NOT NULL DEFAULT 0,"
+                    + "extra_y INT NOT NULL DEFAULT 0,"
+                    + "extra_z INT NOT NULL DEFAULT 0,"
+                    + "extra_subzones INT NOT NULL DEFAULT 0,"
+                    + "extra_rents INT NOT NULL DEFAULT 0,"
+                    + "override_res INT NULL,"
+                    + "override_x INT NULL,"
+                    + "override_y INT NULL,"
+                    + "override_z INT NULL,"
+                    + "override_subzones INT NULL,"
+                    + "override_rents INT NULL,"
+                    + "updated_at BIGINT NOT NULL"
+                    + ")");
         }
     }
 
@@ -958,6 +983,266 @@ public class DatabaseStorageManager {
             }
         }
         return counts;
+    }
+
+    private String playerActivityUpsertSql() {
+        if (isMySqlFamily()) {
+            return "INSERT INTO " + tablePrefix + "player_activity (player_uuid, player_name, last_seen, last_server) VALUES (?, ?, ?, ?) "
+                    + "ON DUPLICATE KEY UPDATE "
+                    + "last_server = IF(VALUES(last_seen) >= last_seen, VALUES(last_server), last_server), "
+                    + "player_name = IF(VALUES(last_seen) >= last_seen AND VALUES(player_name) IS NOT NULL, VALUES(player_name), player_name), "
+                    + "last_seen = GREATEST(last_seen, VALUES(last_seen))";
+        }
+        if (storageType == StorageType.POSTGRESQL) {
+            return "INSERT INTO " + tablePrefix + "player_activity (player_uuid, player_name, last_seen, last_server) VALUES (?, ?, ?, ?) "
+                    + "ON CONFLICT (player_uuid) DO UPDATE SET "
+                    + "last_server = CASE WHEN excluded.last_seen >= " + tablePrefix + "player_activity.last_seen THEN excluded.last_server ELSE " + tablePrefix + "player_activity.last_server END, "
+                    + "player_name = CASE WHEN excluded.last_seen >= " + tablePrefix + "player_activity.last_seen AND excluded.player_name IS NOT NULL THEN excluded.player_name ELSE " + tablePrefix + "player_activity.player_name END, "
+                    + "last_seen = GREATEST(" + tablePrefix + "player_activity.last_seen, excluded.last_seen)";
+        }
+        return "INSERT INTO " + tablePrefix + "player_activity (player_uuid, player_name, last_seen, last_server) VALUES (?, ?, ?, ?) "
+                + "ON CONFLICT (player_uuid) DO UPDATE SET "
+                + "last_server = CASE WHEN excluded.last_seen >= last_seen THEN excluded.last_server ELSE last_server END, "
+                + "player_name = CASE WHEN excluded.last_seen >= last_seen AND excluded.player_name IS NOT NULL THEN excluded.player_name ELSE player_name END, "
+                + "last_seen = MAX(last_seen, excluded.last_seen)";
+    }
+
+    public void upsertPlayerActivity(UUID playerUuid, String playerName, long lastSeen, String serverName) throws SQLException {
+        if (playerUuid == null || lastSeen <= 0L)
+            return;
+        String srv = normalizeServerKey(serverName);
+        String cleanName = playerName != null && playerName.length() > 64 ? playerName.substring(0, 64) : playerName;
+        synchronized (sqliteWriteLock) {
+            try (Connection conn = openConnection(); PreparedStatement ps = conn.prepareStatement(playerActivityUpsertSql())) {
+                ps.setString(1, playerUuid.toString());
+                ps.setString(2, cleanName);
+                ps.setLong(3, lastSeen);
+                ps.setString(4, srv);
+                ps.executeUpdate();
+            }
+        }
+    }
+
+    public void upsertPlayerActivitiesBatch(Map<UUID, Long> lastSeenByUuid, Map<UUID, String> namesByUuid, String serverName) throws SQLException {
+        if (lastSeenByUuid == null || lastSeenByUuid.isEmpty())
+            return;
+        String srv = normalizeServerKey(serverName);
+        synchronized (sqliteWriteLock) {
+            try (Connection conn = openConnection()) {
+                boolean prevAuto = conn.getAutoCommit();
+                conn.setAutoCommit(false);
+                try (PreparedStatement ps = conn.prepareStatement(playerActivityUpsertSql())) {
+                    int count = 0;
+                    for (Entry<UUID, Long> entry : lastSeenByUuid.entrySet()) {
+                        UUID uuid = entry.getKey();
+                        Long ts = entry.getValue();
+                        if (uuid == null || ts == null || ts <= 0L)
+                            continue;
+                        String name = namesByUuid == null ? null : namesByUuid.get(uuid);
+                        if (name != null && name.length() > 64)
+                            name = name.substring(0, 64);
+                        ps.setString(1, uuid.toString());
+                        ps.setString(2, name);
+                        ps.setLong(3, ts);
+                        ps.setString(4, srv);
+                        ps.addBatch();
+                        if (++count % 500 == 0) {
+                            ps.executeBatch();
+                        }
+                    }
+                    if (count % 500 != 0) {
+                        ps.executeBatch();
+                    }
+                    conn.commit();
+                } catch (SQLException ex) {
+                    conn.rollback();
+                    throw ex;
+                } finally {
+                    conn.setAutoCommit(prevAuto);
+                }
+            }
+        }
+    }
+
+    public Map<UUID, Long> loadAllPlayerLastSeen() throws SQLException {
+        Map<UUID, Long> map = new HashMap<>();
+        String sql = "SELECT player_uuid, last_seen FROM " + tablePrefix + "player_activity";
+        try (Connection conn = openConnection(); PreparedStatement ps = conn.prepareStatement(sql); ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                UUID uuid = parseUuid(rs.getString("player_uuid"));
+                long ts = rs.getLong("last_seen");
+                if (uuid != null && ts > 0L) {
+                    map.put(uuid, ts);
+                }
+            }
+        }
+        return map;
+    }
+
+    private static Integer getNullableInt(ResultSet rs, String col) throws SQLException {
+        int val = rs.getInt(col);
+        return rs.wasNull() ? null : val;
+    }
+
+    private static PlayerLimitManager.PlayerLimitData readPlayerLimitRow(ResultSet rs) throws SQLException {
+        return new PlayerLimitManager.PlayerLimitData(
+                rs.getInt("extra_res"),
+                rs.getInt("extra_x"),
+                rs.getInt("extra_y"),
+                rs.getInt("extra_z"),
+                rs.getInt("extra_subzones"),
+                rs.getInt("extra_rents"),
+                getNullableInt(rs, "override_res"),
+                getNullableInt(rs, "override_x"),
+                getNullableInt(rs, "override_y"),
+                getNullableInt(rs, "override_z"),
+                getNullableInt(rs, "override_subzones"),
+                getNullableInt(rs, "override_rents"));
+    }
+
+    public Map<UUID, PlayerLimitManager.PlayerLimitData> loadAllPlayerLimits() throws SQLException {
+        Map<UUID, PlayerLimitManager.PlayerLimitData> map = new HashMap<>();
+        String sql = "SELECT player_uuid, extra_res, extra_x, extra_y, extra_z, extra_subzones, extra_rents, "
+                + "override_res, override_x, override_y, override_z, override_subzones, override_rents "
+                + "FROM " + tablePrefix + "player_limits";
+        try (Connection conn = openConnection(); PreparedStatement ps = conn.prepareStatement(sql); ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                UUID uuid = parseUuid(rs.getString("player_uuid"));
+                if (uuid == null)
+                    continue;
+                PlayerLimitManager.PlayerLimitData data = readPlayerLimitRow(rs);
+                if (!data.isEmpty()) {
+                    map.put(uuid, data);
+                }
+            }
+        }
+        return map;
+    }
+
+    public PlayerLimitManager.PlayerLimitData loadPlayerLimit(UUID playerUuid) throws SQLException {
+        if (playerUuid == null)
+            return PlayerLimitManager.PlayerLimitData.EMPTY;
+        String sql = "SELECT extra_res, extra_x, extra_y, extra_z, extra_subzones, extra_rents, "
+                + "override_res, override_x, override_y, override_z, override_subzones, override_rents "
+                + "FROM " + tablePrefix + "player_limits WHERE player_uuid = ?";
+        try (Connection conn = openConnection(); PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, playerUuid.toString());
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return readPlayerLimitRow(rs);
+                }
+            }
+        }
+        return PlayerLimitManager.PlayerLimitData.EMPTY;
+    }
+
+    public PlayerLimitManager.PlayerLimitData addPlayerLimit(UUID playerUuid, String playerName, PlayerLimitManager.LimitType type, int delta) throws SQLException {
+        if (playerUuid == null || type == null)
+            return PlayerLimitManager.PlayerLimitData.EMPTY;
+        String col = type.getExtraColumn();
+        String cleanName = playerName != null && playerName.length() > 64 ? playerName.substring(0, 64) : playerName;
+        int initialVal = Math.max(0, delta);
+        long now = System.currentTimeMillis();
+        String sql;
+        if (storageType == StorageType.MYSQL || storageType == StorageType.MARIADB) {
+            sql = "INSERT INTO " + tablePrefix + "player_limits (player_uuid, player_name, " + col + ", updated_at) VALUES (?, ?, ?, ?) "
+                    + "ON DUPLICATE KEY UPDATE "
+                    + "player_name = COALESCE(VALUES(player_name), player_name), "
+                    + col + " = GREATEST(0, " + col + " + ?), "
+                    + "updated_at = VALUES(updated_at)";
+        } else if (storageType == StorageType.POSTGRESQL) {
+            sql = "INSERT INTO " + tablePrefix + "player_limits (player_uuid, player_name, " + col + ", updated_at) VALUES (?, ?, ?, ?) "
+                    + "ON CONFLICT (player_uuid) DO UPDATE SET "
+                    + "player_name = COALESCE(excluded.player_name, " + tablePrefix + "player_limits.player_name), "
+                    + col + " = GREATEST(0, " + tablePrefix + "player_limits." + col + " + ?), "
+                    + "updated_at = excluded.updated_at";
+        } else {
+            sql = "INSERT INTO " + tablePrefix + "player_limits (player_uuid, player_name, " + col + ", updated_at) VALUES (?, ?, ?, ?) "
+                    + "ON CONFLICT (player_uuid) DO UPDATE SET "
+                    + "player_name = COALESCE(excluded.player_name, player_name), "
+                    + col + " = MAX(0, " + col + " + ?), "
+                    + "updated_at = excluded.updated_at";
+        }
+        synchronized (sqliteWriteLock) {
+            try (Connection conn = openConnection(); PreparedStatement ps = conn.prepareStatement(sql)) {
+                ps.setString(1, playerUuid.toString());
+                ps.setString(2, cleanName);
+                ps.setInt(3, initialVal);
+                ps.setLong(4, now);
+                ps.setInt(5, delta);
+                ps.executeUpdate();
+            }
+        }
+        return loadPlayerLimit(playerUuid);
+    }
+
+    public PlayerLimitManager.PlayerLimitData setPlayerLimit(UUID playerUuid, String playerName, PlayerLimitManager.LimitType type, int value) throws SQLException {
+        if (playerUuid == null || type == null)
+            return PlayerLimitManager.PlayerLimitData.EMPTY;
+        String extraCol = type.getExtraColumn();
+        String ovCol = type.getOverrideColumn();
+        String cleanName = playerName != null && playerName.length() > 64 ? playerName.substring(0, 64) : playerName;
+        int cleanVal = Math.max(0, value);
+        long now = System.currentTimeMillis();
+        String sql;
+        if (storageType == StorageType.MYSQL || storageType == StorageType.MARIADB) {
+            sql = "INSERT INTO " + tablePrefix + "player_limits (player_uuid, player_name, " + extraCol + ", " + ovCol + ", updated_at) VALUES (?, ?, 0, ?, ?) "
+                    + "ON DUPLICATE KEY UPDATE "
+                    + "player_name = COALESCE(VALUES(player_name), player_name), "
+                    + extraCol + " = 0, "
+                    + ovCol + " = VALUES(" + ovCol + "), "
+                    + "updated_at = VALUES(updated_at)";
+        } else {
+            sql = "INSERT INTO " + tablePrefix + "player_limits (player_uuid, player_name, " + extraCol + ", " + ovCol + ", updated_at) VALUES (?, ?, 0, ?, ?) "
+                    + "ON CONFLICT (player_uuid) DO UPDATE SET "
+                    + "player_name = COALESCE(excluded.player_name, " + tablePrefix + "player_limits.player_name), "
+                    + extraCol + " = 0, "
+                    + ovCol + " = excluded." + ovCol + ", "
+                    + "updated_at = excluded.updated_at";
+        }
+        synchronized (sqliteWriteLock) {
+            try (Connection conn = openConnection(); PreparedStatement ps = conn.prepareStatement(sql)) {
+                ps.setString(1, playerUuid.toString());
+                ps.setString(2, cleanName);
+                ps.setInt(3, cleanVal);
+                ps.setLong(4, now);
+                ps.executeUpdate();
+            }
+        }
+        return loadPlayerLimit(playerUuid);
+    }
+
+    public PlayerLimitManager.PlayerLimitData resetPlayerLimit(UUID playerUuid, PlayerLimitManager.LimitType type) throws SQLException {
+        if (playerUuid == null)
+            return PlayerLimitManager.PlayerLimitData.EMPTY;
+        synchronized (sqliteWriteLock) {
+            if (type == null) {
+                String sql = "DELETE FROM " + tablePrefix + "player_limits WHERE player_uuid = ?";
+                try (Connection conn = openConnection(); PreparedStatement ps = conn.prepareStatement(sql)) {
+                    ps.setString(1, playerUuid.toString());
+                    ps.executeUpdate();
+                }
+                return PlayerLimitManager.PlayerLimitData.EMPTY;
+            }
+            String sql = "UPDATE " + tablePrefix + "player_limits SET " + type.getExtraColumn() + " = 0, "
+                    + type.getOverrideColumn() + " = NULL, updated_at = ? WHERE player_uuid = ?";
+            try (Connection conn = openConnection(); PreparedStatement ps = conn.prepareStatement(sql)) {
+                ps.setLong(1, System.currentTimeMillis());
+                ps.setString(2, playerUuid.toString());
+                ps.executeUpdate();
+            }
+        }
+        PlayerLimitManager.PlayerLimitData remaining = loadPlayerLimit(playerUuid);
+        if (remaining.isEmpty()) {
+            synchronized (sqliteWriteLock) {
+                try (Connection conn = openConnection();
+                        PreparedStatement ps = conn.prepareStatement("DELETE FROM " + tablePrefix + "player_limits WHERE player_uuid = ?")) {
+                    ps.setString(1, playerUuid.toString());
+                    ps.executeUpdate();
+                }
+            }
+        }
+        return remaining;
     }
 
     private static UUID parseUuid(String raw) {
