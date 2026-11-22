@@ -873,7 +873,10 @@ public class MarketGui implements Listener {
         if (!displayName.equals(res.getName())) {
             lore.add("&8領地代號：&7" + res.getName());
         }
-        lore.add("&7擁有者：&f" + res.getOwner());
+        String archivedOwner = plugin.getCleanupReclaimManager() != null
+                ? plugin.getCleanupReclaimManager().formatArchivedInfoLine(res)
+                : null;
+        lore.add(archivedOwner != null ? archivedOwner : "&7擁有者：&f" + res.getOwner());
         lore.add("&7世界：&f" + res.getWorldName() + " &8(面積 " + res.getTotalSize() + " 格)");
         if (mi.forSale) {
             lore.add("&a售價：&6" + formatMoney(mi.salePrice));

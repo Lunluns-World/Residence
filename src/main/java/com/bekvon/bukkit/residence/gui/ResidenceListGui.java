@@ -1059,9 +1059,18 @@ public class ResidenceListGui implements Listener {
         return false;
     }
 
+    private String formatOwnerLoreLine(String serverName, String resName, UUID resUuid, String ownerName) {
+        if (plugin.getCleanupReclaimManager() != null) {
+            String archived = plugin.getCleanupReclaimManager().formatArchivedInfoLine(serverName, resName, resUuid, ownerName);
+            if (archived != null)
+                return archived;
+        }
+        return lm.Gui_Entry_Owner.getMessage(ownerName);
+    }
+
     private List<String> buildResidenceInfoLore(RemoteResidenceEntry entry, ClaimedResidence localRes) {
         List<String> lore = new ArrayList<>();
-        lore.add(lm.Gui_Entry_Owner.getMessage(entry.getOwnerName()));
+        lore.add(formatOwnerLoreLine(entry.getServerName(), entry.getResName(), entry.getResUuid(), entry.getOwnerName()));
         lore.add(lm.Gui_Entry_World.getMessage(
                 entry.getWorldName(),
                 (int) Math.floor(entry.getTpX()),
@@ -1195,7 +1204,7 @@ public class ResidenceListGui implements Listener {
             if (entry.getAlias() != null && !entry.getAlias().equalsIgnoreCase(entry.getResName())) {
                 lore.add(lm.Gui_Entry_Id.getMessage(entry.getResName()));
             }
-            lore.add(lm.Gui_Entry_Owner.getMessage(entry.getOwnerName()));
+            lore.add(formatOwnerLoreLine(entry.getServerName(), entry.getResName(), entry.getResUuid(), entry.getOwnerName()));
             if (showCross) {
                 String tag = entry.isLocal() ? lm.Gui_Server_Current.getMessage() : lm.Gui_Server_Remote.getMessage();
                 lore.add(lm.Gui_Entry_Server.getMessage(serverLabel, tag));

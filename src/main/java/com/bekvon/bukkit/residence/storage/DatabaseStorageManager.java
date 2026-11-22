@@ -1315,6 +1315,28 @@ public class DatabaseStorageManager {
         }
     }
 
+    public List<CleanupReclaimManager.ReclaimEntry> loadAllCleanupReclaims() throws SQLException {
+        List<CleanupReclaimManager.ReclaimEntry> list = new ArrayList<>();
+        String sql = "SELECT server_name, res_key, res_name, res_uuid, original_owner_uuid, original_owner_name, archived_at "
+                + "FROM " + tablePrefix + "cleanup_reclaim";
+        try (Connection conn = openConnection(); PreparedStatement ps = conn.prepareStatement(sql); ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                UUID uuid = parseUuid(rs.getString("original_owner_uuid"));
+                if (uuid != null) {
+                    list.add(new CleanupReclaimManager.ReclaimEntry(
+                            rs.getString("server_name"),
+                            rs.getString("res_key"),
+                            rs.getString("res_name"),
+                            parseUuid(rs.getString("res_uuid")),
+                            uuid,
+                            rs.getString("original_owner_name"),
+                            rs.getLong("archived_at")));
+                }
+            }
+        }
+        return list;
+    }
+
     public List<CleanupReclaimManager.ReclaimEntry> loadCleanupReclaimsForPlayer(String serverName, UUID ownerUuid) throws SQLException {
         List<CleanupReclaimManager.ReclaimEntry> list = new ArrayList<>();
         if (ownerUuid == null)
