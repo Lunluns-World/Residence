@@ -166,6 +166,12 @@ public class ResidenceManager implements ResidenceInterface {
         }
     }
 
+    public ClaimedResidence getByUUID(UUID uuid) {
+        if (uuid == null)
+            return null;
+        return residencesByUUID.get(uuid);
+    }
+
     @Override
     public ClaimedResidence getByName(String name) {
         if (name == null) {

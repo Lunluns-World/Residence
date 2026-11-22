@@ -21,9 +21,8 @@ import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
 
 import com.bekvon.bukkit.residence.Residence;
+import com.bekvon.bukkit.residence.containers.lm;
 import com.bekvon.bukkit.residence.protection.ClaimedResidence;
-
-import net.Zrips.CMILib.Colors.CMIChatColor;
 
 public class CleanupReclaimManager {
 
@@ -31,14 +30,16 @@ public class CleanupReclaimManager {
         private final String serverName;
         private final String resKey;
         private final String resName;
+        private final UUID resUuid;
         private final UUID originalOwnerUuid;
         private final String originalOwnerName;
         private final long archivedAt;
 
-        public ReclaimEntry(String serverName, String resKey, String resName, UUID originalOwnerUuid, String originalOwnerName, long archivedAt) {
+        public ReclaimEntry(String serverName, String resKey, String resName, UUID resUuid, UUID originalOwnerUuid, String originalOwnerName, long archivedAt) {
             this.serverName = serverName;
             this.resKey = resKey;
             this.resName = resName;
+            this.resUuid = resUuid;
             this.originalOwnerUuid = originalOwnerUuid;
             this.originalOwnerName = originalOwnerName == null ? "" : originalOwnerName;
             this.archivedAt = archivedAt;
@@ -54,6 +55,10 @@ public class CleanupReclaimManager {
 
         public String getResName() {
             return resName;
+        }
+
+        public UUID getResUuid() {
+            return resUuid;
         }
 
         public UUID getOriginalOwnerUuid() {
@@ -99,8 +104,9 @@ public class CleanupReclaimManager {
         String serverName = plugin.getStorageServerName();
         String resName = res.getName();
         String resKey = resName.toLowerCase(Locale.ROOT);
+        UUID resUuid = res.getUniqueId();
         long archivedAt = System.currentTimeMillis();
-        ReclaimEntry entry = new ReclaimEntry(serverName, resKey, resName, originalOwnerUuid, originalOwnerName, archivedAt);
+        ReclaimEntry entry = new ReclaimEntry(serverName, resKey, resName, resUuid, originalOwnerUuid, originalOwnerName, archivedAt);
 
         if (isDatabaseReady()) {
             try {
@@ -186,9 +192,19 @@ public class CleanupReclaimManager {
         List<ReclaimEntry> toDelete = new ArrayList<>();
 
         for (ReclaimEntry entry : entries) {
-            ClaimedResidence res = plugin.getResidenceManager().getByName(entry.getResName());
+            ClaimedResidence res = null;
+            if (entry.getResUuid() != null) {
+                res = plugin.getResidenceManager().getByUUID(entry.getResUuid());
+            }
             if (res == null) {
-                res = plugin.getResidenceManager().getByName(entry.getResKey());
+                ClaimedResidence byName = plugin.getResidenceManager().getByName(entry.getResName());
+                if (byName == null) {
+                    byName = plugin.getResidenceManager().getByName(entry.getResKey());
+                }
+                // Only fall back to name if record had no UUID or the residence's UUID matches
+                if (byName != null && (entry.getResUuid() == null || byName.getUniqueId() == null || entry.getResUuid().equals(byName.getUniqueId()))) {
+                    res = byName;
+                }
             }
             if (res == null) {
                 toDelete.add(entry);
@@ -229,10 +245,7 @@ public class CleanupReclaimManager {
                     + " archived residence(s): " + String.join(", ", restoredNames));
 
             if (notifyPlayer != null && notifyPlayer.isOnline()) {
-                notifyPlayer.sendMessage(CMIChatColor.translate(
-                        "&a[Residence] 歡迎回來！您先前因久未上線而由系統暫管的領地 &e"
-                                + String.join("&7, &e", restoredNames)
-                                + " &a已自動歸還並保留原有設定。"));
+                lm.Residence_CleanupRestored.sendMessage(notifyPlayer, String.join(", ", restoredNames));
             }
         }
     }
@@ -293,10 +306,18 @@ public class CleanupReclaimManager {
                     continue;
                 }
                 String resName = one.getString("resName", key);
+                UUID resUuid = null;
+                String resUuidRaw = one.getString("resUuid");
+                if (resUuidRaw != null) {
+                    try {
+                        resUuid = UUID.fromString(resUuidRaw);
+                    } catch (IllegalArgumentException ignored) {
+                    }
+                }
                 String ownerName = one.getString("ownerName", "");
                 long archivedAt = one.getLong("archivedAt", 0L);
                 String resKey = resName.toLowerCase(Locale.ROOT);
-                yamlEntries.put(resKey, new ReclaimEntry(srv, resKey, resName, uuid, ownerName, archivedAt));
+                yamlEntries.put(resKey, new ReclaimEntry(srv, resKey, resName, resUuid, uuid, ownerName, archivedAt));
             }
         }
     }
@@ -311,6 +332,8 @@ public class CleanupReclaimManager {
                 ReclaimEntry r = e.getValue();
                 String base = "Reclaims." + r.getResKey();
                 yml.set(base + ".resName", r.getResName());
+                if (r.getResUuid() != null)
+                    yml.set(base + ".resUuid", r.getResUuid().toString());
                 yml.set(base + ".ownerUuid", r.getOriginalOwnerUuid().toString());
                 yml.set(base + ".ownerName", r.getOriginalOwnerName());
                 yml.set(base + ".archivedAt", r.getArchivedAt());

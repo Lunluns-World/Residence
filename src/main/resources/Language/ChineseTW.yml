@@ -274,6 +274,7 @@ Language:
     CantKick: '&e無法踢出此玩家'
     In: '&e你目前在領地 &6%1'
     OwnerChange: '&e已將領地 &6%1 &e的擁有者變更為 &6%2'
+    CleanupRestored: '&a歡迎回來！您先前因久未上線而由系統暫管的領地 &e%1 &a已自動歸還並保留原有設定。'
     NonAdmin: '&c你沒有領地的管理權限。'
     Line: '&e領地：&6%1 '
     RentedBy: '&e租用者：&6%1'
