@@ -1,0 +1,139 @@
+name: Build & Auto Release
+
+on:
+  push:
+    branches:
+      - master
+      - main
+      - "fix/**"
+  pull_request:
+    branches:
+      - master
+      - main
+  workflow_dispatch:
+    inputs:
+      force_release:
+        description: "Force create GitHub Release for current pom.xml version if tag does not exist"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+
+      - name: Detect project version and check version change
+        id: version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          FORCE_RELEASE: ${{ inputs.force_release == true }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 - <<'PY'
+          import os, subprocess, xml.etree.ElementTree as ET
+
+          def parse_version(xml_text):
+              root = ET.fromstring(xml_text)
+              ns = ''
+              if root.tag.startswith('{'):
+                  ns = root.tag.split('}')[0] + '}'
+              el = root.find(f'{ns}version')
+              if el is None or not el.text:
+                  raise SystemExit('Could not find <version> in pom.xml')
+              return el.text.strip()
+
+          with open('pom.xml', 'r', encoding='utf-8') as f:
+              curr_ver = parse_version(f.read())
+
+          before_sha = os.environ.get('BEFORE_SHA', '')
+          prev_ver = ''
+          if before_sha and before_sha != '0' * 40:
+              p = subprocess.run(['git', 'show', f'{before_sha}:pom.xml'], capture_output=True, text=True)
+              if p.returncode == 0 and p.stdout.strip():
+                  prev_ver = parse_version(p.stdout)
+
+          tag = f'v{curr_ver}'
+          tag_exists = subprocess.run(['git', 'rev-parse', '-q', '--verify', f'refs/tags/{tag}'], capture_output=True).returncode == 0
+          release_exists = subprocess.run(['gh', 'release', 'view', tag], capture_output=True).returncode == 0
+
+          event_name = os.environ.get('EVENT_NAME', '')
+          force_release = os.environ.get('FORCE_RELEASE', '').lower() == 'true'
+          version_changed = bool(prev_ver) and (curr_ver != prev_ver)
+          should_release = (
+              not tag_exists
+              and not release_exists
+              and (
+                  (event_name == 'push' and version_changed)
+                  or (event_name == 'workflow_dispatch' and force_release)
+              )
+          )
+
+          print(f'Current version: {curr_ver}')
+          print(f'Previous version: {prev_ver or "(none)"}')
+          print(f'Version changed: {version_changed}')
+          print(f'Tag {tag} exists: {tag_exists}, Release exists: {release_exists}')
+          print(f'Should create release: {should_release}')
+
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as out:
+              out.write(f'current={curr_ver}\n')
+              out.write(f'previous={prev_ver}\n')
+              out.write(f'tag={tag}\n')
+              out.write(f'should_release={"true" if should_release else "false"}\n')
+          PY
+
+      - name: Build JAR with Maven
+        run: mvn -B clean package -DskipTests
+
+      - name: Verify shaded JAR integrity
+        env:
+          VERSION: ${{ steps.version.outputs.current }}
+        run: |
+          JAR="target/Residence${VERSION}.jar"
+          test -f "$JAR"
+          UNRELOCATED=$(jar tf "$JAR" | grep -E '^(org/mariadb|org/postgresql|META-INF/versions)' | wc -l)
+          echo "Unrelocated driver/MR entries: $UNRELOCATED"
+          test "$UNRELOCATED" -eq 0
+          unzip -p "$JAR" META-INF/services/java.sql.Driver | grep -q 'com.bekvon.bukkit.residence.libs.mariadb.Driver'
+          unzip -p "$JAR" META-INF/services/java.sql.Driver | grep -q 'com.bekvon.bukkit.residence.libs.postgresql.Driver'
+          sha256sum "$JAR" > "${JAR}.sha256"
+          cat "${JAR}.sha256"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Residence-${{ steps.version.outputs.current }}
+          path: |
+            target/Residence${{ steps.version.outputs.current }}.jar
+            target/Residence${{ steps.version.outputs.current }}.jar.sha256
+          if-no-files-found: error
+
+      - name: Create GitHub Release on version change
+        if: steps.version.outputs.should_release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.current }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          JAR="target/Residence${VERSION}.jar"
+          gh release create "$TAG" \
+            "$JAR" \
+            "${JAR}.sha256" \
+            --title "Residence ${TAG}" \
+            --target "${GITHUB_SHA}" \
+            --generate-notes
