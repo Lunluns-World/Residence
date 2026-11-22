@@ -36,7 +36,7 @@ public class CMIEconomy implements EconomyInterface {
 
     @Override
     public boolean canAfford(UUID player, double amount) {
-        if (amount < 0)
+        if (!Double.isFinite(amount) || amount < 0)
             return false;
         CMIUser user = CMIUser.getUser(player);
         return user != null && user.getBalance() >= amount;
@@ -44,7 +44,7 @@ public class CMIEconomy implements EconomyInterface {
 
     @Override
     public boolean canAfford(String playerName, double amount) {
-        if (amount < 0)
+        if (!Double.isFinite(amount) || amount < 0)
             return false;
         CMIUser user = CMIUser.getUser(playerName);
         if (user != null && user.getBalance() >= amount) {
@@ -55,8 +55,10 @@ public class CMIEconomy implements EconomyInterface {
 
     @Override
     public boolean add(String playerName, double amount) {
-        if (amount < 0)
+        if (!Double.isFinite(amount) || amount < 0)
             return false;
+        if (amount == 0D)
+            return true;
         CMIUser user = CMIUser.getUser(playerName);
         if (user != null)
             user.deposit(amount);
@@ -65,8 +67,10 @@ public class CMIEconomy implements EconomyInterface {
 
     @Override
     public boolean add(UUID playerUUID, double amount) {
-        if (amount < 0)
+        if (!Double.isFinite(amount) || amount < 0)
             return false;
+        if (amount == 0D)
+            return true;
         CMIUser user = CMIUser.getUser(playerUUID);
         if (user != null)
             user.deposit(amount);
@@ -75,8 +79,10 @@ public class CMIEconomy implements EconomyInterface {
 
     @Override
     public boolean subtract(String playerName, double amount) {
-        if (amount < 0)
+        if (!Double.isFinite(amount) || amount < 0)
             return false;
+        if (amount == 0D)
+            return true;
         if (!canAfford(playerName, amount)) {
             return false;
         }
@@ -93,8 +99,10 @@ public class CMIEconomy implements EconomyInterface {
 
     @Override
     public boolean subtract(UUID playerUUID, double amount) {
-        if (amount < 0)
+        if (!Double.isFinite(amount) || amount < 0)
             return false;
+        if (amount == 0D)
+            return true;
         if (!canAfford(playerUUID, amount))
             return false;
         CMIUser user = CMIUser.getUser(playerUUID);
@@ -105,8 +113,10 @@ public class CMIEconomy implements EconomyInterface {
 
     @Override
     public boolean transfer(String playerFrom, String playerTo, double amount) {
-        if (amount <= 0)
+        if (!Double.isFinite(amount) || amount < 0)
             return false;
+        if (amount == 0D)
+            return true;
         if (!canAfford(playerFrom, amount)) {
             return false;
         }
@@ -122,8 +132,10 @@ public class CMIEconomy implements EconomyInterface {
 
     @Override
     public boolean transfer(UUID playerFrom, UUID playerTo, double amount) {
-        if (amount <= 0)
+        if (!Double.isFinite(amount) || amount < 0)
             return false;
+        if (amount == 0D)
+            return true;
         if (!canAfford(playerFrom, amount)) {
             return false;
         }

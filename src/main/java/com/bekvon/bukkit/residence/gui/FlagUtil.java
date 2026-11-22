@@ -71,14 +71,23 @@ public class FlagUtil {
     }
 
     public void openPsetFlagGui(Player player, UUID targetPlayer, ClaimedResidence res, boolean resadmin, int page) {
-        if (player == null || !player.isOnline())
+        if (player == null || !player.isOnline() || res == null)
             return;
+        if (!resadmin && !res.getPermissions().hasResidencePermission(player, false)) {
+            lm.General_NoPermission.sendMessage(player);
+            return;
+        }
 
         setFlagInfo flag = new setFlagInfo(res, player, targetPlayer, resadmin);
         flag.recalculate();
 
         PageInfo pi = new PageInfo(45, flag.getButtons().size(), page);
-        openUI(flag, pi, player, lm.Gui_Pset_Title.getMessage(res.getName(), ResidencePlayer.getName(targetPlayer)));
+        String targetName = ResidencePlayer.getName(targetPlayer);
+        if ((targetName == null || targetName.isEmpty()) && targetPlayer != null) {
+            org.bukkit.OfflinePlayer off = org.bukkit.Bukkit.getOfflinePlayer(targetPlayer);
+            targetName = off != null && off.getName() != null ? off.getName() : targetPlayer.toString().substring(0, 8);
+        }
+        openUI(flag, pi, player, lm.Gui_Pset_Title.getMessage(res.getName(), targetName != null ? targetName : "Unknown"));
         return;
     }
 
@@ -108,8 +117,12 @@ public class FlagUtil {
     }
 
     public void openSetFlagGui(Player player, ClaimedResidence res, boolean resadmin, int page) {
-        if (player == null || !player.isOnline())
+        if (player == null || !player.isOnline() || res == null)
             return;
+        if (!resadmin && !res.getPermissions().hasResidencePermission(player, false)) {
+            lm.General_NoPermission.sendMessage(player);
+            return;
+        }
         setFlagInfo flag = new setFlagInfo(res, player, resadmin);
         flag.recalculate();
         PageInfo pi = new PageInfo(45, flag.getButtons().size(), page);

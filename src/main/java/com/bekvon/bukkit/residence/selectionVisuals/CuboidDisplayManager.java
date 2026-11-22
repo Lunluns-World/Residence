@@ -72,9 +72,13 @@ public class CuboidDisplayManager implements Listener {
     }
 
     private static boolean sameArea(CMIBlockWorldArea first, CMIBlockWorldArea second) {
-        return first == second || (first.getWorld() != null && second.getWorld() != null
+        if (first == second)
+            return true;
+        if (first == null || second == null)
+            return false;
+        return first.getWorld() != null && second.getWorld() != null
                 && first.getWorld().getUUID() != null && first.getWorld().getUUID().equals(second.getWorld().getUUID())
-                && first.isAreaWithinArea(second) && second.isAreaWithinArea(first));
+                && first.isAreaWithinArea(second) && second.isAreaWithinArea(first);
     }
 
     public static void add(Player player, CMIBlockWorldArea area, CuboidDisplayType type, double hideInSeconds) {

@@ -114,7 +114,7 @@ public class Metrics {
                 this::appendServiceData,
                 isFolia
                         ? null
-                        : submitDataTask -> Bukkit.getScheduler().runTask(plugin, submitDataTask),
+                        : submitDataTask -> Bukkit.getGlobalRegionScheduler().execute(plugin, submitDataTask),
                 plugin::isEnabled,
                 (message, error) -> this.plugin.getLogger().log(Level.WARNING, message, error),
                 (message) -> this.plugin.getLogger().log(Level.INFO, message),

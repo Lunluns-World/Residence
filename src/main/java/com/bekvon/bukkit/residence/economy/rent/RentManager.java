@@ -17,6 +17,7 @@ import org.bukkit.entity.Player;
 
 import com.bekvon.bukkit.residence.Residence;
 import com.bekvon.bukkit.residence.api.MarketRentInterface;
+import com.bekvon.bukkit.residence.containers.Flags;
 import com.bekvon.bukkit.residence.containers.ResAdmin;
 import com.bekvon.bukkit.residence.containers.ResidencePlayer;
 import com.bekvon.bukkit.residence.containers.Visualizer;
@@ -28,6 +29,7 @@ import com.bekvon.bukkit.residence.permissions.PermissionGroup;
 import com.bekvon.bukkit.residence.permissions.PermissionManager.ResPerm;
 import com.bekvon.bukkit.residence.protection.ClaimedResidence;
 import com.bekvon.bukkit.residence.protection.FlagPermissions.FlagState;
+import com.bekvon.bukkit.residence.protection.ResidencePermissions;
 import com.bekvon.bukkit.residence.utils.GetTime;
 
 import net.Zrips.CMILib.Colors.CMIChatColor;
@@ -418,7 +420,7 @@ public class RentManager implements MarketRentInterface {
 
             if (plugin.getEconomyManager().transfer(player.getUniqueId(), res.getPermissions().getOwnerUUID(), land.cost)) {
                 RentedLand newrent = new RentedLand();
-//                newrent.player = player.getName();
+                newrent.player = player.getName();
                 newrent.setUniqueId(player.getUniqueId());
                 newrent.startTime = System.currentTimeMillis();
                 newrent.endTime = System.currentTimeMillis() + daysToMs(land.days);
@@ -436,12 +438,13 @@ public class RentManager implements MarketRentInterface {
                 res.getPermissions().copyUserPermissions(res.getPermissions().getOwnerUUID(), player.getUniqueId());
                 res.getPermissions().clearPlayersFlags(res.getPermissions().getOwnerUUID());
                 res.getPermissions().applyDefaultRentedFlags();
+                res.getPermissions().setPlayerFlag(player.getUniqueId(), Flags.bank.toString(), FlagState.NEITHER);
                 lm.Residence_RentSuccess.sendMessage(player, res.getName(), land.days);
 
                 if (plugin.getSchematicManager() != null &&
                         plugin.getConfigManager().RestoreAfterRentEnds &&
                         !plugin.getConfigManager().SchematicsSaveOnFlagChange &&
-                        res.getPermissions().has("backup", true)) {
+                        res.getPermissions().has("backup", false)) {
                     plugin.getSchematicManager().save(res);
                 }
 
@@ -551,10 +554,10 @@ public class RentManager implements MarketRentInterface {
             if (revent.isCancelled())
                 return;
 
-            removeRented(player, res);
+            removeRented(rent.getUniqueId(), rent.getRenterName(), res);
 
             res.setRented(null);
-            if (!res.getRentable().AllowRenewing && !res.getRentable().StayInMarket) {
+            if (res.getRentable() != null && !res.getRentable().AllowRenewing && !res.getRentable().StayInMarket) {
                 rentableLand.remove(res);
                 res.setRentable(null);
             }
@@ -568,8 +571,13 @@ public class RentManager implements MarketRentInterface {
 
             if (plugin.getSchematicManager() != null && plugin.getConfigManager().RestoreAfterRentEnds && backup) {
                 plugin.getSchematicManager().load(res);
-                // set true if its already exists
-                res.getPermissions().setFlag("backup", FlagState.TRUE);
+                // set true if its already exists without re-saving schematic on flag change
+                ResidencePermissions.setEventCallsSuspended(true);
+                try {
+                    res.getPermissions().setFlag("backup", FlagState.TRUE);
+                } finally {
+                    ResidencePermissions.setEventCallsSuspended(false);
+                }
             }
             plugin.getSignUtil().checkSign(res);
 
@@ -601,6 +609,11 @@ public class RentManager implements MarketRentInterface {
 
         if (!res.getPermissions().hasResidencePermission(player, true) && !resadmin) {
             lm.General_NoPermission.sendMessage(player);
+            return;
+        }
+
+        if (res.isRented()) {
+            lm.Residence_AlreadyRented.sendMessage(player, res.getName(), getRentingPlayer(res));
             return;
         }
 
@@ -777,16 +790,9 @@ public class RentManager implements MarketRentInterface {
                 continue;
 
             RentableLand rentable = res.getRentable();
-            if (!rentable.AllowRenewing) {
-                if (!rentable.StayInMarket) {
-                    rentableLand.remove(res);
-                    res.setRentable(null);
-                }
-
-                removeRented(res);
-
-                res.getPermissions().applyDefaultFlags();
-                plugin.getSignUtil().checkSign(res);
+            if (rentable == null || !rentable.AllowRenewing) {
+                if (finishRentExpiration(res, rentable))
+                    break;
                 continue;
             }
 
@@ -805,15 +811,11 @@ public class RentManager implements MarketRentInterface {
                 }
 
                 if (money < rentable.cost) {
-                    if (!rentable.StayInMarket) {
-                        rentableLand.remove(res);
-                        res.setRentable(null);
-                    }
-                    removeRented(res);
-                    res.getPermissions().applyDefaultFlags();
+                    if (finishRentExpiration(res, rentable))
+                        break;
                 } else {
 
-                    boolean updatedTime = true;
+                    boolean updatedTime = false;
                     if (plugin.getConfigManager().isDeductFromBankThenPlayer()) {
                         double deductFromPlayer = rentable.cost;
                         double leftInBank = res.getBank().getStoredMoneyD();
@@ -850,42 +852,52 @@ public class RentManager implements MarketRentInterface {
                     }
 
                     if (!updatedTime) {
-                        if (!rentable.StayInMarket) {
-                            rentableLand.remove(res);
-                            res.setRentable(null);
-                        }
-                        removeRented(res);
-                        res.getPermissions().applyDefaultFlags();
+                        if (finishRentExpiration(res, rentable))
+                            break;
                     } else {
                         land.endTime = System.currentTimeMillis() + daysToMs(rentable.days);
+                        plugin.getSignUtil().checkSign(res);
                     }
                 }
 
-                plugin.getSignUtil().checkSign(res);
                 continue;
             }
-            if (!rentable.StayInMarket) {
-                rentableLand.remove(res);
-                res.setRentable(null);
-            }
-
-            removeRented(res);
-
-            boolean backup = res.getPermissions().has("backup", false);
-
-            res.getPermissions().applyDefaultFlags();
-
-            if (plugin.getSchematicManager() != null && plugin.getConfigManager().RestoreAfterRentEnds && backup) {
-                plugin.getSchematicManager().load(res);
-                plugin.getSignUtil().checkSign(res);
-                // set true if its already exists
-                res.getPermissions().setFlag("backup", FlagState.TRUE);
-                // To avoid lag spikes on multiple residence restores at once, will limit to one
-                // residence at time
+            if (finishRentExpiration(res, rentable)) {
                 break;
             }
-            plugin.getSignUtil().checkSign(res);
         }
+    }
+
+    private boolean finishRentExpiration(ClaimedResidence res, RentableLand rentable) {
+        if (rentable != null && !rentable.StayInMarket) {
+            rentableLand.remove(res);
+            res.setRentable(null);
+        }
+
+        boolean backup = res.getPermissions().has("backup", false);
+
+        removeRented(res);
+
+        if (plugin.getConfigManager().isRemoveLwcOnUnrent() && plugin.isLwcPresent())
+            ResidenceLWCListener.removeLwcFromResidence(null, res);
+
+        res.getPermissions().applyDefaultFlags();
+
+        if (plugin.getSchematicManager() != null && plugin.getConfigManager().RestoreAfterRentEnds && backup) {
+            plugin.getSchematicManager().load(res);
+            plugin.getSignUtil().checkSign(res);
+            // set true if its already exists without re-saving schematic on flag change
+            ResidencePermissions.setEventCallsSuspended(true);
+            try {
+                res.getPermissions().setFlag("backup", FlagState.TRUE);
+            } finally {
+                ResidencePermissions.setEventCallsSuspended(false);
+            }
+            // To avoid lag spikes on multiple residence restores at once, limit to one residence at a time
+            return true;
+        }
+        plugin.getSignUtil().checkSign(res);
+        return false;
     }
 
     @Override

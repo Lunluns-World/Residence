@@ -61,11 +61,11 @@ public class ResidenceListener1_09 implements Listener {
 
         if (FlagPermissions.shouldDenyAndNotify(player, player, Flags.elytra, null)) {
             event.setCancelled(true);
-            CMIScheduler.runAtLocation(plugin, player.getLocation(), () -> {
+            player.getScheduler().run(plugin, task -> {
                 // Need to enable before disabling to prevent client side bug
                 player.setGliding(true);
                 player.setGliding(false);
-            });
+            }, null);
         }
     }
 
@@ -91,7 +91,7 @@ public class ResidenceListener1_09 implements Listener {
 
         player.setGliding(false);
 
-        CMIScheduler.runAtLocation(plugin, player.getLocation(), () -> {
+        player.getScheduler().run(plugin, task -> {
 
             Location loc = ResidencePlayerListener.getSafeLocation(player.getLocation());
             if (loc == null) {
@@ -107,7 +107,7 @@ public class ResidenceListener1_09 implements Listener {
                 player.closeInventory();
                 Teleporting.teleport(player, loc);
             }
-        });
+        }, null);
     }
 
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
@@ -215,20 +215,16 @@ public class ResidenceListener1_09 implements Listener {
         // Start - Get AreaEffectCloud effect type
         if (Version.isCurrentEqualOrHigher(Version.v1_20_2)) {
             potionType = cloud.getBasePotionType();
-            if (potionType == null) {
-                return;
-            }
-            for (PotionEffect effect : potionType.getPotionEffects()) {
-                PotionEffectType type = effect.getType();
-                if (PotionUtils.isHealingEffect(type)) {
-                    isHealingCloud = true;
-                    break;
-                } else if (PotionUtils.isDamageEffect(type)) {
-                    isDamageCloud = true;
-                    break;
-                } else if (PotionUtils.isHarmfulEffect(type)) {
-                    isHarmfulCloud = true;
-                    break;
+            if (potionType != null) {
+                for (PotionEffect effect : potionType.getPotionEffects()) {
+                    PotionEffectType type = effect.getType();
+                    if (PotionUtils.isHealingEffect(type)) {
+                        isHealingCloud = true;
+                    } else if (PotionUtils.isDamageEffect(type)) {
+                        isDamageCloud = true;
+                    } else if (PotionUtils.isHarmfulEffect(type)) {
+                        isHarmfulCloud = true;
+                    }
                 }
             }
         } else {
@@ -236,49 +232,52 @@ public class ResidenceListener1_09 implements Listener {
             if (data != null) {
                 potionType = data.getType();
             }
-            if (potionType == null) {
-                return;
+            if (potionType != null) {
+                @SuppressWarnings("deprecation")
+                PotionEffectType type = potionType.getEffectType();
+                if (type != null) {
+                    if (PotionUtils.isHealingEffect(type)) {
+                        isHealingCloud = true;
+                    } else if (PotionUtils.isDamageEffect(type)) {
+                        isDamageCloud = true;
+                    } else if (PotionUtils.isHarmfulEffect(type)) {
+                        isHarmfulCloud = true;
+                    }
+                }
             }
-            @SuppressWarnings("deprecation")
-            PotionEffectType type = potionType.getEffectType();
-            if (type == null) {
-                return;
+        }
+        if (cloud.hasCustomEffects()) {
+            for (PotionEffect effect : cloud.getCustomEffects()) {
+                PotionEffectType type = effect.getType();
+                if (PotionUtils.isHealingEffect(type)) {
+                    isHealingCloud = true;
+                } else if (PotionUtils.isDamageEffect(type)) {
+                    isDamageCloud = true;
+                } else if (PotionUtils.isHarmfulEffect(type)) {
+                    isHarmfulCloud = true;
+                }
             }
-            if (PotionUtils.isHealingEffect(type)) {
-                isHealingCloud = true;
-
-            } else if (PotionUtils.isDamageEffect(type)) {
-                isDamageCloud = true;
-
-            } else if (PotionUtils.isHarmfulEffect(type)) {
-                isHarmfulCloud = true;
-
-            }
+        }
+        if (!isHealingCloud && !isDamageCloud && !isHarmfulCloud) {
+            return;
         }
         // End - Get AreaEffectCloud effect type
         Player attackerPlayer = (attacker instanceof Player)
                 ? (Player) attacker
                 : null;
+        ClaimedResidence attackerRes = (attackerPlayer != null)
+                ? ClaimedResidence.getByLoc(attackerPlayer.getLocation())
+                : null;
 
-        if (isHealingCloud) {
-            // Healing effect damages undead mobs
-            if (!Flags.mobkilling.isGlobalyEnabled()) {
-                return;
-            }
+        if (isHealingCloud && (Flags.mobkilling.isGlobalyEnabled() || Flags.animalkilling.isGlobalyEnabled())) {
+            // Healing effect damages undead mobs and undead mounts
             event.getAffectedEntities().removeIf(victim -> PotionUtils.shouldDenyHealingEffect(victim, attackerPlayer));
-
-        } else if (isDamageCloud) {
-            ClaimedResidence attackerRes = (attackerPlayer != null)
-                    ? ClaimedResidence.getByLoc(attackerPlayer.getLocation())
-                    : null;
+        }
+        if (isDamageCloud) {
             event.getAffectedEntities().removeIf(victim -> PotionUtils.shouldDenyDamageEffect(victim, attackerPlayer, attackerRes));
-
-        } else if (isHarmfulCloud) {
-            ClaimedResidence attackerRes = (attackerPlayer != null)
-                    ? ClaimedResidence.getByLoc(attackerPlayer.getLocation())
-                    : null;
+        }
+        if (isHarmfulCloud) {
             event.getAffectedEntities().removeIf(victim -> PotionUtils.shouldDenyHarmfulEffect(victim, attackerPlayer, attackerRes));
-
         }
     }
 

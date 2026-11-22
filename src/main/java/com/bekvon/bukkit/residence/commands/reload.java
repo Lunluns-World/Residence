@@ -36,6 +36,7 @@ public class reload implements cmd {
             return true;
         case "config":
             plugin.getConfigManager().UpdateConfigFile();
+            plugin.reloadDatabaseAndCrossServer();
             if (plugin.getWebMapManager() != null) {
                 plugin.getWebMapManager().activate();
             }

@@ -525,13 +525,15 @@ public class ClaimedResidence {
                 if (Residence.getInstance().isKingdomsPresent() && Residence.getInstance().getKingdomsUtil().isSelectionInArea(player))
                     return false;
             }
+        }
 
-            if (Residence.getInstance().getConfigManager().isChargeOnAreaAdd() && chargeMoney && getParent() == null && Residence.getInstance().getConfigManager().enableEconomy() && !resadmin) {
-                double chargeamount = area.getCost(group);
-                if (!Residence.getInstance().getTransactionManager().chargeEconomyMoney(player, chargeamount)) {
-                    return false;
-                }
-            }
+        double chargeamount = 0D;
+        boolean shouldCharge = false;
+        PermissionGroup chargeGroup = null;
+        if (!resadmin && player != null && Residence.getInstance().getConfigManager().isChargeOnAreaAdd() && chargeMoney && getParent() == null && Residence.getInstance().getConfigManager().enableEconomy()) {
+            chargeGroup = Residence.getInstance().getPlayerManager().getResidencePlayer(player).getGroup();
+            chargeamount = area.getCost(chargeGroup);
+            shouldCharge = chargeamount > 0;
         }
 
         ResidenceAreaAddEvent resevent = new ResidenceAreaAddEvent(player, NName, this, area);
@@ -539,8 +541,21 @@ public class ClaimedResidence {
         if (resevent.isCancelled())
             return false;
 
+        if (shouldCharge && !Residence.getInstance().getTransactionManager().chargeEconomyMoney(player, chargeamount)) {
+            return false;
+        }
+
+        long oldTotalSize = getTotalSize();
         CuboidArea addedArea = area;
         Residence.getInstance().getResidenceManager().updateIndexedArea(this, () -> addAreaByName(NName, addedArea));
+        if (getParent() == null && (oldTotalSize > 0 || shouldCharge)) {
+            long addedSize = addedArea.getSize();
+            long newTotalSize = oldTotalSize + addedSize;
+            if (newTotalSize > 0) {
+                double paidAddedWorth = (shouldCharge && chargeGroup != null) ? addedSize * chargeGroup.getSellPerBlock() : 0D;
+                BlockSellPrice = (oldTotalSize * BlockSellPrice + paidAddedWorth) / (double) newTotalSize;
+            }
+        }
         return true;
     }
 
@@ -696,6 +711,8 @@ public class ClaimedResidence {
             }
         }
 
+        double expansionCharge = 0D;
+        PermissionGroup expansionGroup = null;
         if (!resadmin && player != null) {
 
             if (!resadmin) {
@@ -705,13 +722,12 @@ public class ClaimedResidence {
                     return false;
             }
 
-            PermissionGroup group = PermissionGroup.getGroup(player);
+            expansionGroup = PermissionGroup.getGroup(player);
 
             if (Residence.getInstance().getConfigManager().isChargeOnExpansion() && getParent() == null && Residence.getInstance().getConfigManager().enableEconomy() && !resadmin) {
-                double chargeamount = newarea.getCost(group) - oldarea.getCost(group);
-                if (chargeamount > 0 && !Residence.getInstance().getTransactionManager().chargeEconomyMoney(player, chargeamount)) {
-                    return false;
-                }
+                double costDiff = newarea.getCost(expansionGroup) - oldarea.getCost(expansionGroup);
+                if (costDiff > 0)
+                    expansionCharge = costDiff;
             }
         }
 
@@ -720,16 +736,36 @@ public class ClaimedResidence {
         if (resevent.isCancelled())
             return false;
 
-        if ((!resadmin) && (player != null)) {
-            int chargeamount = (int) Math
-                    .ceil((newarea.getSize() - oldarea.getSize()) * getBlockSellPrice().doubleValue());
-            if ((chargeamount < 0) && (Residence.getInstance().getConfigManager().useResMoneyBack())) {
-                if (!this.isServerLand())
-                    Residence.getInstance().getTransactionManager().giveEconomyMoney(player, -chargeamount);
+        if (expansionCharge > 0 && !Residence.getInstance().getTransactionManager().chargeEconomyMoney(player, expansionCharge)) {
+            return false;
+        }
+
+        long oldTotalSize = getTotalSize();
+        long sizeDelta = newarea.getSize() - oldarea.getSize();
+
+        if ((!resadmin) && (player != null) && getParent() == null && sizeDelta < 0
+                && Residence.getInstance().getConfigManager().enableEconomy()
+                && Residence.getInstance().getConfigManager().useResMoneyBack()
+                && (Residence.getInstance().getConfigManager().isChargeOnCreation()
+                        || Residence.getInstance().getConfigManager().isChargeOnExpansion()
+                        || Residence.getInstance().getConfigManager().isChargeOnAreaAdd())) {
+            double refund = (long) ((-sizeDelta * getBlockSellPrice().doubleValue()) * 100L) / 100D;
+            if (refund > 0 && !this.isServerLand()) {
+                Residence.getInstance().getTransactionManager().giveEconomyMoney(player, refund);
             }
         }
 
         Residence.getInstance().getResidenceManager().updateIndexedArea(this, () -> addAreaByName(name, newarea));
+
+        if (getParent() == null && sizeDelta > 0) {
+            long newTotalSize = oldTotalSize + sizeDelta;
+            if (newTotalSize > 0) {
+                double paidAddedWorth = (expansionCharge > 0 && expansionGroup != null)
+                        ? sizeDelta * expansionGroup.getSellPerBlock()
+                        : 0D;
+                BlockSellPrice = (oldTotalSize * BlockSellPrice + paidAddedWorth) / (double) newTotalSize;
+            }
+        }
 
         lm.Area_Update.sendMessage(player);
         return true;
@@ -760,7 +796,10 @@ public class ClaimedResidence {
     }
 
     public boolean addSubzone(Player player, String owner, Location loc1, Location loc2, String name, boolean resadmin) {
+        return addSubzone(player, owner, null, loc1, loc2, name, resadmin);
+    }
 
+    public boolean addSubzone(Player player, String owner, UUID ownerUuid, Location loc1, Location loc2, String name, boolean resadmin) {
         if (!Utils.verifyResidenceName(player, name))
             return false;
 
@@ -813,14 +852,14 @@ public class ClaimedResidence {
             }
         }
 
-        ClaimedResidence newres;
-        if (player != null) {
-            newres = new ClaimedResidence(owner, perms.getWorldName(), this);
+        ClaimedResidence newres = ownerUuid == null
+                ? new ClaimedResidence(owner, perms.getWorldName(), this)
+                : new ClaimedResidence(owner, ownerUuid, perms.getWorldName());
+        newres.parent = this;
+        if (player != null)
             newres.addArea(player, newArea, NName, resadmin);
-        } else {
-            newres = new ClaimedResidence(owner, perms.getWorldName(), this);
+        else
             newres.addArea(newArea, NName);
-        }
 
         if (newres.getAreaCount() != 0) {
             newres.getPermissions().applyDefaultFlags();
@@ -844,7 +883,6 @@ public class ClaimedResidence {
                 return false;
 
             subzones.put(name, newres);
-            Residence.getInstance().getResidenceManager().calculateChunks(newres);
             lm.Area_Create.sendMessage(player, NName);
             lm.Subzone_Create.sendMessage(player, NName);
 
@@ -949,11 +987,14 @@ public class ClaimedResidence {
             return false;
         name = name.toLowerCase();
         ClaimedResidence res = subzones.get(name);
+        if (res == null)
+            return false;
         if (player != null && !res.perms.hasResidencePermission(player, true) && !resadmin) {
             lm.General_NoPermission.sendMessage(player);
             return false;
         }
         subzones.remove(name);
+        Residence.getInstance().getResidenceManager().removeChunkList(res);
         lm.Subzone_Remove.sendMessage(player, name);
         return true;
     }
@@ -1373,35 +1414,15 @@ public class ClaimedResidence {
 
         Utils.closeInventory(targetPlayer);
 
-        try {
-            if (!Version.isFolia())
-                targloc.getChunk().load();
-        } catch (Throwable e) {
-        }
-
-        if (Version.isAsyncProcessing()) {
-
-            CompletableFuture<Boolean> future = Teleporting.teleport(targetPlayer, targloc);
-            future.thenAccept(result -> {
-                if (result) {
-                    if (near)
-                        lm.Residence_TeleportNear.sendMessage(targetPlayer);
-                    else
-                        lm.General_TeleportSuccess.sendMessage(targetPlayer);
-                }
-            });
-            return;
-        }
-
-        boolean teleported = targetPlayer.teleport(targloc);
-        if (!teleported)
-            return;
-
-        if (near)
-            lm.Residence_TeleportNear.sendMessage(targetPlayer);
-        else
-            lm.General_TeleportSuccess.sendMessage(targetPlayer);
-
+        CompletableFuture<Boolean> future = Teleporting.teleport(targetPlayer, targloc);
+        future.thenAccept(result -> {
+            if (Boolean.TRUE.equals(result)) {
+                if (near)
+                    lm.Residence_TeleportNear.sendMessage(targetPlayer);
+                else
+                    lm.General_TeleportSuccess.sendMessage(targetPlayer);
+            }
+        });
     }
 
     @Deprecated
@@ -1710,8 +1731,10 @@ public class ClaimedResidence {
                 if (subres.getResidenceName() == null)
                     subres.setName(map.getKey());
 
-                if (Residence.getInstance().getConfigManager().flagsInherit())
+                if (Residence.getInstance().getConfigManager().flagsInherit() && subres.getPermissions().isInheritParentFlags())
                     subres.getPermissions().setParent(res.getPermissions());
+                else
+                    subres.getPermissions().setParent(null);
 
                 // Adding subzone owner into his res list if parent zone owner is not the same
                 // person
@@ -2216,6 +2239,11 @@ public class ClaimedResidence {
                 break;
             }
             if (f.isInGroup(padd.groupedFlag) && !this.getPermissions().playerHas(player, f, FlagCombo.OnlyTrue)) {
+                if ((f == Flags.container_put || f == Flags.container_take)
+                        && this.getPermissions().playerHas(player, Flags.container, FlagCombo.OnlyTrue)
+                        && !this.getPermissions().playerHas(player, f, FlagCombo.OnlyFalse)) {
+                    continue;
+                }
                 trusted = false;
                 break;
             }

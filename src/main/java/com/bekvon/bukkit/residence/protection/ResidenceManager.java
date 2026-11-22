@@ -44,6 +44,7 @@ import com.bekvon.bukkit.residence.containers.ResAdmin;
 import com.bekvon.bukkit.residence.containers.ResidencePlayer;
 import com.bekvon.bukkit.residence.containers.Visualizer;
 import com.bekvon.bukkit.residence.containers.lm;
+import com.bekvon.bukkit.residence.crossserver.RemoteResidenceEntry;
 import com.bekvon.bukkit.residence.economy.rent.RentableLand;
 import com.bekvon.bukkit.residence.economy.rent.RentedLand;
 import com.bekvon.bukkit.residence.event.ResidenceCreationEvent;
@@ -301,7 +302,7 @@ public class ResidenceManager implements ResidenceInterface {
                 return false;
             }
 
-            if (rPlayer.getResAmount() >= rPlayer.getMaxRes() && !resadmin) {
+            if (!resadmin && rPlayer.getResAmount() >= rPlayer.getMaxRes()) {
                 lm.Residence_TooMany.sendMessage(player);
                 return false;
             }
@@ -320,7 +321,7 @@ public class ResidenceManager implements ResidenceInterface {
             return false;
         }
 
-        newRes.BlockSellPrice = group.getSellPerBlock();
+        newRes.BlockSellPrice = 0D;
 
         if (!newRes.addArea(player, newArea, "main", resadmin, false))
             return false;
@@ -334,18 +335,34 @@ public class ResidenceManager implements ResidenceInterface {
         if (resevent.isCancelled())
             return false;
 
-        if (Residence.getInstance().getConfigManager().isChargeOnCreation() && !newRes.isSubzone() && plugin.getConfigManager().enableEconomy() && !resadmin && deductMoney) {
-            double chargeamount = newArea.getCost(group);
+        String resKey = resName.toLowerCase(java.util.Locale.ROOT);
+        UUID ownerUuid = newRes.getOwnerUUID();
+        boolean reserved = !resadmin && rPlayer != null && plugin.getCrossServerManager().usesGlobalQuota();
+        if (reserved && !plugin.getCrossServerManager().reserveResidence(ownerUuid, resKey, rPlayer.getMaxRes(), player))
+            return false;
 
-            if (chargeamount > 0 && !plugin.getTransactionManager().chargeEconomyMoney(player, chargeamount)) {
-                // Need to remove area if we can't create residence
-                newRes.removeArea("main");
-                return false;
+        boolean committed = false;
+        try {
+            if (Residence.getInstance().getConfigManager().isChargeOnCreation() && !newRes.isSubzone() && plugin.getConfigManager().enableEconomy() && !resadmin && deductMoney) {
+                double chargeamount = newArea.getCost(group);
+
+                if (chargeamount > 0) {
+                    if (!plugin.getTransactionManager().chargeEconomyMoney(player, chargeamount)) {
+                        // Need to remove area if we can't create residence
+                        newRes.removeArea("main");
+                        return false;
+                    }
+                    newRes.BlockSellPrice = group.getSellPerBlock();
+                }
             }
-        }
 
-        residences.put(resName.toLowerCase(), newRes);
-        residencesByUUID.put(newRes.getUniqueId(), newRes);
+            residences.put(resKey, newRes);
+            residencesByUUID.put(newRes.getUniqueId(), newRes);
+            committed = true;
+        } finally {
+            if (reserved && !committed)
+                plugin.getCrossServerManager().releaseResidenceReservation(ownerUuid, resKey);
+        }
 
         calculateChunks(newRes);
         plugin.getLeaseManager().removeExpireTime(newRes);
@@ -366,6 +383,9 @@ public class ResidenceManager implements ResidenceInterface {
         }
         if (plugin.getConfigManager().useLeases()) {
             plugin.getLeaseManager().setExpireTime(player, newRes, group.getLeaseGiveTime());
+        }
+        if (plugin.getCrossServerManager() != null && plugin.getCrossServerManager().isEnabled()) {
+            plugin.getCrossServerManager().triggerAsyncSync();
         }
         return true;
 
@@ -436,6 +456,9 @@ public class ResidenceManager implements ResidenceInterface {
         ownedResidences.putAll(plugin.getPlayerManager().getTrustedResidencesMap(targetUuid, hidden, onlyHidden, world));
 
         plugin.getInfoPageManager().printListInfo(sender, targetUuid, ownedResidences, page, resadmin, world);
+        if (world == null && page == 1 && plugin.getCrossServerManager() != null && plugin.getCrossServerManager().isEnabled()) {
+            printRemoteResidences(sender, plugin.getCrossServerManager().getRemoteResidencesByOwner(targetUuid), hidden, resadmin);
+        }
     }
 
     public void listAllResidences(CommandSender sender, int page) {
@@ -445,6 +468,44 @@ public class ResidenceManager implements ResidenceInterface {
     public void listAllResidences(CommandSender sender, int page, boolean showhidden, World world) {
         TreeMap<String, ClaimedResidence> list = getFromAllResidencesMap(showhidden, false, world);
         plugin.getInfoPageManager().printListInfo(sender, (UUID) null, list, page, showhidden, world);
+        if (world == null && page == 1 && plugin.getCrossServerManager() != null && plugin.getCrossServerManager().isEnabled()) {
+            printRemoteResidences(sender, plugin.getCrossServerManager().getRemoteResidences(), showhidden, showhidden);
+        }
+    }
+
+    private void printRemoteResidences(CommandSender sender, List<RemoteResidenceEntry> remotes, boolean showHidden, boolean resadmin) {
+        if (remotes == null || remotes.isEmpty())
+            return;
+        List<RemoteResidenceEntry> visible = new ArrayList<>();
+        UUID viewerUuid = sender instanceof Player ? ((Player) sender).getUniqueId() : null;
+        for (RemoteResidenceEntry e : remotes) {
+            if (!showHidden && !resadmin && e.isHidden() && !e.isOwner(viewerUuid))
+                continue;
+            visible.add(e);
+        }
+        if (visible.isEmpty())
+            return;
+
+        sender.sendMessage(CMIChatColor.translate("&e--- Cross-Server Residences (&6" + visible.size() + "&e) ---"));
+        int maxShown = 10;
+        for (int i = 0; i < Math.min(visible.size(), maxShown); i++) {
+            RemoteResidenceEntry e = visible.get(i);
+            String serverLabel = plugin.getConfigManager().getCrossServerDisplayName(e.getServerName());
+            String line = CMIChatColor.translate("&6[" + serverLabel + "&6] &e" + e.getDisplayName()
+                    + " &7(" + e.getWorldName() + ") &8- &f" + e.getOwnerName());
+            if (sender instanceof Player) {
+                RawMessage rm = new RawMessage();
+                rm.addText(line)
+                        .addHover(CMIChatColor.translate("&eClick to teleport: &6/res tp " + e.getQualifiedName()))
+                        .addCommand("res tp " + e.getQualifiedName());
+                rm.show(sender);
+            } else {
+                sender.sendMessage(line);
+            }
+        }
+        if (visible.size() > maxShown) {
+            sender.sendMessage(CMIChatColor.translate("&7... and " + (visible.size() - maxShown) + " more. Use &e/res gui &7to browse all."));
+        }
     }
 
     public void listAllResidences(CommandSender sender, int page, boolean showhidden) {
@@ -745,6 +806,19 @@ public class ResidenceManager implements ResidenceInterface {
             for (Player one : res.getPlayersInResidence()) {
                 ResidencePlayer.get(one).updateResidenceLocation();
             }
+        if (parent == null) {
+            if (plugin.getGuiMetaManager() != null) {
+                plugin.getGuiMetaManager().onResidenceRemoved(res.getName());
+            }
+            if (plugin.getCrossServerManager() != null) {
+                if (plugin.getCrossServerManager().usesGlobalQuota()) {
+                    plugin.getCrossServerManager().releaseResidenceReservation(null, res.getName().toLowerCase(java.util.Locale.ROOT));
+                }
+                if (plugin.getCrossServerManager().isEnabled()) {
+                    plugin.getCrossServerManager().triggerAsyncSync();
+                }
+            }
+        }
     }
 
     public void giveBackOwnerMoneyForResidence(ClaimedResidence res) {
@@ -753,7 +827,8 @@ public class ResidenceManager implements ResidenceInterface {
 
         double giveBack = 0D;
 
-        if (res.getParent() == null && plugin.getConfigManager().enableEconomy() && plugin.getConfigManager().useResMoneyBack())
+        if (res.getParent() == null && plugin.getConfigManager().enableEconomy() && plugin.getConfigManager().useResMoneyBack()
+                && (plugin.getConfigManager().isChargeOnCreation() || plugin.getConfigManager().isChargeOnExpansion() || plugin.getConfigManager().isChargeOnAreaAdd()))
             giveBack += res.getWorth();
 
         if (res.getBank().getStoredMoneyD() > 0 && plugin.getConfigManager().isResBankBack())
@@ -894,7 +969,10 @@ public class ResidenceManager implements ResidenceInterface {
     }
 
     public boolean hasMaxZones(UUID playerUUID, int target) {
-        return getOwnedZoneCount(playerUUID) < target;
+        int remote = plugin.getCrossServerManager() != null
+                ? plugin.getCrossServerManager().getRemoteResidenceCount(playerUUID)
+                : 0;
+        return getOwnedZoneCount(playerUUID) + remote < target;
     }
 
     @Deprecated
@@ -1590,6 +1668,17 @@ public class ResidenceManager implements ResidenceInterface {
             plugin.getSignUtil().updateSignResName(res);
 
             lm.Residence_Rename.sendMessage(sender, oldName, newName);
+            if (plugin.getGuiMetaManager() != null) {
+                plugin.getGuiMetaManager().onResidenceRenamed(oldName, newName);
+            }
+            if (plugin.getCrossServerManager() != null) {
+                if (plugin.getCrossServerManager().usesGlobalQuota()) {
+                    plugin.getCrossServerManager().renameResidenceReservation(oldName.toLowerCase(java.util.Locale.ROOT), newName.toLowerCase(java.util.Locale.ROOT));
+                }
+                if (plugin.getCrossServerManager().isEnabled()) {
+                    plugin.getCrossServerManager().triggerAsyncSync();
+                }
+            }
 
             return true;
         }
@@ -1639,7 +1728,7 @@ public class ResidenceManager implements ResidenceInterface {
             lm.Residence_GiveLimits.sendMessage(reqPlayer);
             return;
         }
-        if (!hasMaxZones(giveplayer.getUniqueId(), rPlayer.getMaxRes()) && !resadmin) {
+        if (!resadmin && getOwnedZoneCount(giveplayer.getUniqueId()) >= rPlayer.getMaxRes()) {
             lm.Residence_GiveLimits.sendMessage(reqPlayer);
             return;
         }
@@ -1653,7 +1742,7 @@ public class ResidenceManager implements ResidenceInterface {
             }
         }
 
-        if (!res.getPermissions().setOwner(giveplayer, true))
+        if (!res.getPermissions().setOwner(giveplayer.getUniqueId(), true, () -> true, resadmin ? null : reqPlayer))
             return;
         // Fix phrases here
         lm.Residence_Give.sendMessage(reqPlayer, residence, giveplayer.getName());
@@ -1687,6 +1776,12 @@ public class ResidenceManager implements ResidenceInterface {
             }
 
             cleanResidenceRecords(next, false);
+            if (plugin.getGuiMetaManager() != null) {
+                plugin.getGuiMetaManager().onResidenceRemoved(next.getName());
+            }
+            if (plugin.getCrossServerManager() != null && plugin.getCrossServerManager().usesGlobalQuota()) {
+                plugin.getCrossServerManager().releaseResidenceReservation(null, next.getName().toLowerCase(java.util.Locale.ROOT));
+            }
 
             removeChunkList(next);
             it.remove();
@@ -1697,6 +1792,9 @@ public class ResidenceManager implements ResidenceInterface {
             sender.sendMessage(CMIChatColor.RED + "No residences found in world: " + CMIChatColor.YELLOW + world);
         } else {
             sender.sendMessage(CMIChatColor.RED + "Removed " + CMIChatColor.YELLOW + count + CMIChatColor.RED + " residences in world: " + CMIChatColor.YELLOW + world);
+            if (plugin.getCrossServerManager() != null && plugin.getCrossServerManager().isEnabled()) {
+                plugin.getCrossServerManager().triggerAsyncSync();
+            }
         }
     }
 
@@ -1739,23 +1837,32 @@ public class ResidenceManager implements ResidenceInterface {
     public void removeChunkList(ClaimedResidence res) {
         chunkIndexLock.writeLock().lock();
         try {
-            if (res == null)
-                return;
-            String world = res.getPermissions().getWorldName();
+            removeChunkListInternal(res);
+        } finally {
+            chunkIndexLock.writeLock().unlock();
+        }
+    }
 
-            Map<ChunkRef, List<ClaimedResidence>> worldChunks = chunkResidences.get(world);
+    private void removeChunkListInternal(ClaimedResidence res) {
+        if (res == null)
+            return;
+        String world = res.getPermissions().getWorldName();
 
-            if (worldChunks == null)
-                return;
+        Map<ChunkRef, List<ClaimedResidence>> worldChunks = chunkResidences.get(world);
 
+        if (worldChunks != null) {
             for (ChunkRef chunk : res.getChunks()) {
                 List<ClaimedResidence> ress = worldChunks.get(chunk);
                 if (ress == null)
                     continue;
                 ress.remove(res);
+                if (ress.isEmpty())
+                    worldChunks.remove(chunk);
             }
-        } finally {
-            chunkIndexLock.writeLock().unlock();
+        }
+
+        for (ClaimedResidence sub : res.getSubzones()) {
+            removeChunkListInternal(sub);
         }
     }
 
@@ -1773,12 +1880,9 @@ public class ResidenceManager implements ResidenceInterface {
     void updateIndexedArea(ClaimedResidence res, Runnable update) {
         chunkIndexLock.writeLock().lock();
         try {
-            ClaimedResidence parent = res.getParent();
-            boolean indexed = parent == null
-                    ? residencesByUUID.get(res.getUniqueId()) == res
-                    : res.getResidenceName() != null && parent.getSubzone(res.getResidenceName()) == res;
+            boolean indexed = res != null && res.isTopArea() && residencesByUUID.get(res.getUniqueId()) == res;
             if (indexed)
-                removeChunkList(res);
+                removeChunkListInternal(res);
             update.run();
             if (indexed)
                 calculateChunks(res);
@@ -1790,7 +1894,7 @@ public class ResidenceManager implements ResidenceInterface {
     public void calculateChunks(ClaimedResidence res) {
         chunkIndexLock.writeLock().lock();
         try {
-            if (res == null)
+            if (res == null || !res.isTopArea())
                 return;
             String world = res.getPermissions().getWorldName();
 

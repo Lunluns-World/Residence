@@ -115,7 +115,7 @@ public class LocaleManager {
             return;
         c.load();
         c.copyDefaults(true);
-        copyBundledFlagTranslations(lang);
+        copyBundledTranslations(lang);
 
         if (lang.equalsIgnoreCase(plugin.getConfigManager().getLanguage()))
             c.setRecordContents(true);
@@ -194,21 +194,28 @@ public class LocaleManager {
         c.save();
     }
 
-    private void copyBundledFlagTranslations(String language) {
-        String flagsPath = path + "flags.SubCommands";
+    private void copyBundledTranslations(String language) {
+        String[] sections = new String[] {
+                path + "flags.SubCommands",
+                "Language.Gui",
+                path + "gui",
+                path + "migrate"
+        };
         try (InputStream resource = plugin.getResource("Language/" + language + ".yml")) {
             if (resource == null)
                 return;
             YamlConfiguration defaults = YamlConfiguration.loadConfiguration(new InputStreamReader(resource, StandardCharsets.UTF_8));
-            ConfigurationSection bundled = defaults.getConfigurationSection(flagsPath);
-            if (bundled == null)
-                return;
-            for (String key : bundled.getKeys(true)) {
-                if (!bundled.isConfigurationSection(key) && !c.getC().contains(flagsPath + "." + key))
-                    c.getC().set(flagsPath + "." + key, bundled.get(key));
+            for (String sectionPath : sections) {
+                ConfigurationSection bundled = defaults.getConfigurationSection(sectionPath);
+                if (bundled == null)
+                    continue;
+                for (String key : bundled.getKeys(true)) {
+                    if (!bundled.isConfigurationSection(key) && !c.getC().contains(sectionPath + "." + key))
+                        c.getC().set(sectionPath + "." + key, bundled.get(key));
+                }
             }
         } catch (IOException e) {
-            plugin.getLogger().warning("Could not read bundled Residence flag translations: " + e.getMessage());
+            plugin.getLogger().warning("Could not read bundled Residence translations: " + e.getMessage());
         }
     }
 

@@ -111,12 +111,6 @@ public class CMIBlockDisplay {
 
         Location location = new Location(current.getWorld(), state.x, state.y, state.z);
 
-        if (!Version.isFolia()) {
-            current.teleport(location);
-            updateTransformation(current, state);
-            return;
-        }
-
         if (!current.isDead() && !removed && visualState == state)
             updateTransformation(current, state);
 

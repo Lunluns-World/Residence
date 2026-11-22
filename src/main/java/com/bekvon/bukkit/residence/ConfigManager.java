@@ -40,6 +40,7 @@ import com.bekvon.bukkit.residence.protection.FlagPermissions;
 import com.bekvon.bukkit.residence.protection.FlagPermissions.FlagState;
 import com.bekvon.bukkit.residence.selection.SelectionManager;
 import com.bekvon.bukkit.residence.selection.VisualizerConfig;
+import com.bekvon.bukkit.residence.storage.StorageType;
 
 import net.Zrips.CMILib.CMILib;
 import net.Zrips.CMILib.Colors.CMIChatColor;
@@ -1358,6 +1359,59 @@ public class ConfigManager {
         c.addComment("Raid.FriendlyFire", "When set to false players in same teams (attackers or defenders) will not cause each other damage");
         RaidFriendlyFire = c.get("Raid.FriendlyFire", true);
 
+        c.addComment("Storage", "Database storage configuration. Type can be YAML, SQLITE, MYSQL, MARIADB, or POSTGRESQL.",
+                "Use '/resadmin migrate yaml2db apply' or '/resadmin migrate db2yaml' from console to convert existing data.");
+        storageType = StorageType.fromString(c.get("Storage.Type", "YAML"));
+        storageSqliteFile = c.get("Storage.SQLiteFile", "Save/residence.db");
+        storageHost = c.get("Storage.Host", "localhost");
+        storagePort = c.get("Storage.Port", 3306);
+        storageDatabase = c.get("Storage.Database", "residence");
+        storageUsername = c.get("Storage.Username", "root");
+        storagePassword = c.get("Storage.Password", "");
+        storageTablePrefix = c.get("Storage.TablePrefix", "res_");
+        storageParameters = c.get("Storage.Parameters", "useSSL=false&autoReconnect=true&characterEncoding=utf8");
+        storageSyncWithYamlBackup = c.get("Storage.SyncWithYamlBackup", false);
+
+        c.addComment("CrossServer", "Cross-server residence index, global residence limit, and BungeeCord/Velocity teleportation.",
+                "Requires a shared SQL database (MYSQL, MARIADB, or POSTGRESQL; SQLITE can be used for local testing).");
+        crossServerEnabled = c.get("CrossServer.Enabled", false);
+        crossServerName = c.get("CrossServer.ServerName", "survival-1");
+        crossServerSyncInterval = Math.max(5, c.get("CrossServer.SyncIntervalSeconds", 15));
+        crossServerGlobalLimit = c.get("CrossServer.GlobalResidenceLimit", true);
+        crossServerTeleportTimeout = Math.max(5, c.get("CrossServer.TeleportTimeoutSeconds", 30));
+        crossServerChannel = c.get("CrossServer.Channel", "BungeeCord");
+        c.addComment("CrossServer.ServerDisplayNames",
+                "Optional friendly display names shown in GUI and messages (supports & color codes).",
+                "Keys must match each backend's CrossServer.ServerName (Velocity/BungeeCord ID).");
+        crossServerDisplayNames.clear();
+        if (c.getC().isConfigurationSection("CrossServer.ServerDisplayNames")) {
+            ConfigurationSection sec = c.getC().getConfigurationSection("CrossServer.ServerDisplayNames");
+            if (sec != null) {
+                for (String key : sec.getKeys(false)) {
+                    String val = c.get("CrossServer.ServerDisplayNames." + key, sec.getString(key, key));
+                    if (val != null && !val.trim().isEmpty()) {
+                        crossServerDisplayNames.put(key.trim().toLowerCase(), val.trim());
+                    }
+                }
+            }
+        } else if (crossServerName != null && !crossServerName.trim().isEmpty()) {
+            String defVal = c.get("CrossServer.ServerDisplayNames." + crossServerName, crossServerName);
+            if (defVal != null && !defVal.trim().isEmpty()) {
+                crossServerDisplayNames.put(crossServerName.trim().toLowerCase(), defVal.trim());
+            }
+        }
+
+        c.addComment("ResidenceGui", "Interactive Residence Browser & Management GUI (/res gui), inspired by ResidenceList.");
+        residenceGuiEnabled = c.get("ResidenceGui.Enabled", true);
+        c.addComment("ResidenceGui.OpenOnListCommand", "When enabled, /res list and /res listall open the Residence GUI directly for players.",
+                "Use '/res list text' or '/res listall text' (or run from console) to keep the classic chat text list.");
+        residenceGuiOpenOnListCommand = c.get("ResidenceGui.OpenOnListCommand", true);
+        residenceGuiDefaultIcon = c.get("ResidenceGui.DefaultIcon", "OAK_SIGN");
+        residenceGuiShowHiddenToOwner = c.get("ResidenceGui.ShowHiddenToOwner", true);
+        residenceGuiAllowLike = c.get("ResidenceGui.AllowLike", true);
+        residenceGuiAllowPin = c.get("ResidenceGui.AllowPin", true);
+        residenceGuiShowCrossServer = c.get("ResidenceGui.ShowCrossServer", true);
+
         c.save();
     }
 
@@ -2219,6 +2273,141 @@ public class ConfigManager {
 
     public boolean getAutoMobRemovalIgnoreNamedMobs() {
         return AutoMobRemovalIgnoreNamedMobs;
+    }
+
+    private StorageType storageType = StorageType.YAML;
+    private String storageSqliteFile = "Save/residence.db";
+    private String storageHost = "localhost";
+    private int storagePort = 3306;
+    private String storageDatabase = "residence";
+    private String storageUsername = "root";
+    private String storagePassword = "";
+    private String storageTablePrefix = "res_";
+    private String storageParameters = "useSSL=false&autoReconnect=true&characterEncoding=utf8";
+    private boolean storageSyncWithYamlBackup = false;
+
+    private boolean crossServerEnabled = false;
+    private String crossServerName = "survival-1";
+    private int crossServerSyncInterval = 15;
+    private boolean crossServerGlobalLimit = true;
+    private int crossServerTeleportTimeout = 30;
+    private String crossServerChannel = "BungeeCord";
+    private final Map<String, String> crossServerDisplayNames = new HashMap<>();
+
+    private boolean residenceGuiEnabled = true;
+    private boolean residenceGuiOpenOnListCommand = true;
+    private String residenceGuiDefaultIcon = "OAK_SIGN";
+    private boolean residenceGuiShowHiddenToOwner = true;
+    private boolean residenceGuiAllowLike = true;
+    private boolean residenceGuiAllowPin = true;
+    private boolean residenceGuiShowCrossServer = true;
+
+    public StorageType getStorageType() {
+        return storageType;
+    }
+
+    public String getStorageSqliteFile() {
+        return storageSqliteFile;
+    }
+
+    public String getStorageHost() {
+        return storageHost;
+    }
+
+    public int getStoragePort() {
+        return storagePort;
+    }
+
+    public String getStorageDatabase() {
+        return storageDatabase;
+    }
+
+    public String getStorageUsername() {
+        return storageUsername;
+    }
+
+    public String getStoragePassword() {
+        return storagePassword;
+    }
+
+    public String getStorageTablePrefix() {
+        return storageTablePrefix;
+    }
+
+    public String getStorageParameters() {
+        return storageParameters;
+    }
+
+    public boolean isStorageSyncWithYamlBackup() {
+        return storageSyncWithYamlBackup;
+    }
+
+    public boolean isCrossServerEnabled() {
+        return crossServerEnabled;
+    }
+
+    public String getCrossServerName() {
+        return crossServerName;
+    }
+
+    public int getCrossServerSyncInterval() {
+        return crossServerSyncInterval;
+    }
+
+    public boolean isCrossServerGlobalLimit() {
+        return crossServerGlobalLimit;
+    }
+
+    public int getCrossServerTeleportTimeout() {
+        return crossServerTeleportTimeout;
+    }
+
+    public String getCrossServerChannel() {
+        return crossServerChannel;
+    }
+
+    public String getCrossServerDisplayName(String serverName) {
+        if (serverName == null || serverName.trim().isEmpty())
+            return "";
+        String custom = crossServerDisplayNames.get(serverName.trim().toLowerCase());
+        return (custom != null && !custom.isEmpty()) ? custom : serverName;
+    }
+
+    public boolean matchesCrossServerName(String query, String serverName) {
+        if (query == null || serverName == null)
+            return false;
+        if (query.equalsIgnoreCase(serverName))
+            return true;
+        String plainDisplay = CMIChatColor.stripColor(CMIChatColor.translate(getCrossServerDisplayName(serverName)));
+        return plainDisplay != null && plainDisplay.equalsIgnoreCase(query);
+    }
+
+    public boolean isResidenceGuiEnabled() {
+        return residenceGuiEnabled;
+    }
+
+    public boolean isResidenceGuiOpenOnListCommand() {
+        return residenceGuiOpenOnListCommand;
+    }
+
+    public String getResidenceGuiDefaultIcon() {
+        return residenceGuiDefaultIcon;
+    }
+
+    public boolean isResidenceGuiShowHiddenToOwner() {
+        return residenceGuiShowHiddenToOwner;
+    }
+
+    public boolean isResidenceGuiAllowLike() {
+        return residenceGuiAllowLike;
+    }
+
+    public boolean isResidenceGuiAllowPin() {
+        return residenceGuiAllowPin;
+    }
+
+    public boolean isResidenceGuiShowCrossServer() {
+        return residenceGuiShowCrossServer;
     }
 
 //    public int getTownMinRange() {

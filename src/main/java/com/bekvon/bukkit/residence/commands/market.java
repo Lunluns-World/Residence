@@ -147,6 +147,11 @@ public class market implements cmd {
                 return true;
             }
 
+            if (!res.isOwner(player) && !resadmin) {
+                lm.Residence_NotOwner.sendMessage(sender);
+                return true;
+            }
+
             boolean ForSale = res.isForSell();
             boolean ForRent = res.isForRent();
 

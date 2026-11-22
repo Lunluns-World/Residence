@@ -30,18 +30,43 @@ public class ResidenceListener1_21_9_Paper implements Listener {
         if (!event.isAllowed())
             return;
 
-        if (FlagPermissions.shouldIgnoreCheck(Flags.golemopenchest, event.getEntity())) {
+        if (plugin.isDisabledWorldListener(event.getEntity())) {
             return;
         }
         if (event.getEntityType() != EntityType.COPPER_GOLEM)
             return;
 
-        FlagPermissions perms = FlagPermissions.getPerms(event.getBlock().getLocation());
-        if (perms.has(Flags.golemopenchest, perms.has(Flags.container, true)))
+        Location blockLoc = event.getBlock().getLocation();
+        ClaimedResidence targetRes = ClaimedResidence.getByLoc(blockLoc);
+        FlagPermissions perms = (targetRes != null)
+                ? targetRes.getPermissions()
+                : plugin.getWorldFlags().getPerms(blockLoc.getWorld());
+
+        if (Flags.golemopenchest.isGlobalyEnabled()
+                && !perms.has(Flags.golemopenchest, perms.has(Flags.container, true))) {
+            event.setAllowed(false);
             return;
+        }
 
-        event.setAllowed(false);
+        Location originLoc = event.getEntity().getOrigin();
+        ClaimedResidence originRes = originLoc != null ? ClaimedResidence.getByLoc(originLoc) : null;
+        ClaimedResidence currentRes = ClaimedResidence.getByLoc(event.getEntity().getLocation());
 
+        if (targetRes != null) {
+            boolean sameAsOrigin = originRes != null && (originRes == targetRes || originRes.isOwner(targetRes.getOwner()));
+            boolean sameAsCurrent = currentRes != null && (currentRes == targetRes || currentRes.isOwner(targetRes.getOwner()));
+            if ((!sameAsOrigin || !sameAsCurrent) && Flags.container.isGlobalyEnabled()
+                    && !targetRes.getPermissions().has(Flags.container, true)) {
+                event.setAllowed(false);
+                return;
+            }
+        }
+        if (originRes != null && (targetRes == null || (originRes != targetRes && !originRes.isOwner(targetRes.getOwner())))) {
+            if (Flags.container.isGlobalyEnabled() && !originRes.getPermissions().has(Flags.container, true)) {
+                event.setAllowed(false);
+                return;
+            }
+        }
     }
 
     // Prevent external copper golems from forming statues inside Residence

@@ -89,17 +89,19 @@ public class PotionUtils {
     }
 
     public static boolean shouldDenyHealingEffect(@NotNull LivingEntity victim, @Nullable Player attackerPlayer) {
-        // Healing effect damages undead mobs
-        if (attackerPlayer != null) {
-            if (Utils.isUndead(victim)) {
-                return FlagPermissions.shouldDenyAndNotify(attackerPlayer, victim, Flags.mobkilling);
-            }
-        } else {
-            if (Utils.isUndead(victim)) {
-                return FlagPermissions.has(victim.getLocation(), Flags.mobkilling, FlagCombo.OnlyFalse);
-            }
+        // Healing effect damages undead mobs and undead mounts
+        if (!Utils.isUndead(victim)) {
+            return false;
         }
-        return false;
+        Flags flag = Utils.isAnimal(victim) ? Flags.animalkilling : Flags.mobkilling;
+        if (!flag.isGlobalyEnabled()) {
+            return false;
+        }
+        if (attackerPlayer != null) {
+            return FlagPermissions.shouldDenyAndNotify(attackerPlayer, victim, flag);
+        } else {
+            return FlagPermissions.has(victim.getLocation(), flag, FlagCombo.OnlyFalse);
+        }
     }
 
     public static boolean shouldDenyDamageEffect(@NotNull LivingEntity victim, @Nullable Player attackerPlayer, @Nullable ClaimedResidence attackerRes) {
@@ -132,6 +134,12 @@ public class PotionUtils {
                 // if PVP disabled at victim location, deny the effect
                 if (victimPerms.has(Flags.pvp, FlagCombo.OnlyFalse)) {
                     lm.Flag_Deny.sendMessage(attackerPlayer, Flags.pvp);
+                    return true;
+                }
+                if (Residence.getInstance().getWorldFlags().getPerms(attackerPlayer.getWorld()).has(Flags.pvp, FlagCombo.OnlyFalse)
+                        && (attackerRes == null || !attackerRes.getPermissions().has(Flags.pvp, FlagCombo.OnlyTrue)
+                                || victimRes == null || !victimRes.getPermissions().has(Flags.pvp, FlagCombo.OnlyTrue))) {
+                    lm.General_WorldPVPDisabled.sendMessage(attackerPlayer);
                     return true;
                 }
                 if (attackerRes != null && attackerRes == victimRes

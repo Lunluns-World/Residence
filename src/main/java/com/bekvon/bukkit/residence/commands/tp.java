@@ -27,14 +27,27 @@ public class tp implements cmd {
             return false;
 
         ClaimedResidence res = null;
-        if (args.length > 0)
-            res = plugin.getResidenceManager().getByName(args[0]);
+        if (args.length > 0) {
+            String targetName = args[0];
+            int colon = targetName.indexOf(':');
+            if (colon > 0 && colon < targetName.length() - 1) {
+                String prefixServer = targetName.substring(0, colon);
+                if (plugin.getConfigManager().matchesCrossServerName(prefixServer, plugin.getStorageServerName())) {
+                    targetName = targetName.substring(colon + 1);
+                }
+            }
+            res = plugin.getResidenceManager().getByName(targetName);
+        }
 
         if (res == null && args.length == 0) {
             res = plugin.getPlayerManager().getResidencePlayer(player).getMainResidence();
         }
 
         if (res == null) {
+            if (args.length > 0 && plugin.getCrossServerManager() != null
+                    && plugin.getCrossServerManager().tryCrossServerTeleport(player, args[0], resadmin)) {
+                return true;
+            }
             lm.Invalid_Residence.sendMessage(sender);
             return true;
         }

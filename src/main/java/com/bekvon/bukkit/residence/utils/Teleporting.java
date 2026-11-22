@@ -9,11 +9,7 @@ import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.player.PlayerTeleportEvent.TeleportCause;
 
-import com.bekvon.bukkit.residence.Residence;
 import com.bekvon.bukkit.residence.containers.DelayTeleport;
-
-import net.Zrips.CMILib.Version.PaperMethods.PaperLib;
-import net.Zrips.CMILib.Version.Schedulers.CMIScheduler;
 
 public class Teleporting {
 
@@ -68,21 +64,14 @@ public class Teleporting {
     }
 
     public static CompletableFuture<Boolean> teleport(Entity entity, Location loc, TeleportCause cause) {
-        CompletableFuture<Boolean> future = new CompletableFuture<>();
+        if (entity == null || loc == null || loc.getWorld() == null)
+            return CompletableFuture.completedFuture(false);
         try {
-            CMIScheduler.runTask(Residence.getInstance(), () -> {
-                PaperLib.teleportAsync(entity, loc, cause)
-                        .whenComplete((result, ex) -> {
-                            if (ex != null) {
-                                future.completeExceptionally(ex);
-                            } else {
-                                future.complete(result);
-                            }
-                        });
-            });
+            return entity.teleportAsync(loc, cause);
         } catch (Throwable e) {
-            future.completeExceptionally(e);
+            CompletableFuture<Boolean> failed = new CompletableFuture<>();
+            failed.completeExceptionally(e);
+            return failed;
         }
-        return future;
     }
 }

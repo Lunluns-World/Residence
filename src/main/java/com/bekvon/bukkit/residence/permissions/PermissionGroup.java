@@ -573,7 +573,12 @@ public class PermissionGroup {
             lm.Limits_Admin.sendMessage(sender, Residence.getInstance().getPermissionManager().isResidenceAdmin(sender));
         lm.Limits_CanCreate.sendMessage(sender, group.canCreateResidences());
         lm.Limits_MaxRes.sendMessage(sender, rPlayer.getMaxRes());
-        lm.Limits_NumberOwn.sendMessage(sender, rPlayer.getResAmount());
+        int ownedCount = rPlayer.getResAmount();
+        if (Residence.getInstance().getCrossServerManager() != null
+                && Residence.getInstance().getCrossServerManager().usesGlobalQuota()) {
+            ownedCount += Residence.getInstance().getCrossServerManager().getRemoteResidenceCount(target);
+        }
+        lm.Limits_NumberOwn.sendMessage(sender, ownedCount);
         lm.Limits_MaxEW.sendMessage(sender, group.getMinX() + "-" + rPlayer.getMaxX());
         lm.Limits_MaxNS.sendMessage(sender, group.getMinZ() + "-" + rPlayer.getMaxZ());
         lm.Limits_MaxUD.sendMessage(sender, group.getMinYSize() + "-" + group.getMaxYSize());

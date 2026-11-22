@@ -243,8 +243,8 @@ public class RandomTp {
 
                             loc = location;
 
-                        } else if (Version.isPaper() && Version.isCurrentEqualOrHigher(Version.v1_13_R1)) {
-                            CompletableFuture<Chunk> chunkFuture = PaperLib.getChunkAtAsync(loc, false);
+                        } else {
+                            CompletableFuture<Chunk> chunkFuture = loc.getWorld().getChunkAtAsync(loc, false);
                             Chunk chunk = chunkFuture.get();
 
                             if (chunk == null)
@@ -253,8 +253,6 @@ public class RandomTp {
                             int y = chunk.getChunkSnapshot().getHighestBlockYAt(loc.getBlockX() & 0xF, loc.getBlockZ() & 0xF) - 1;
 
                             loc.setY(y);
-                        } else {
-                            loc.setY(loc.getWorld().getHighestBlockYAt(loc));
                         }
                     }
                 }
@@ -339,8 +337,8 @@ public class RandomTp {
 
                     loc = location;
 
-                } else if (Version.isPaper() && Version.isCurrentEqualOrHigher(Version.v1_13_R1)) {
-                    CompletableFuture<Chunk> chunkFuture = PaperLib.getChunkAtAsync(loc, true);
+                } else {
+                    CompletableFuture<Chunk> chunkFuture = loc.getWorld().getChunkAtAsync(loc, true);
 
                     Chunk chunk = chunkFuture.get();
 
@@ -349,12 +347,6 @@ public class RandomTp {
 
                     int y = chunk.getChunkSnapshot().getHighestBlockYAt(loc.getBlockX() & 0xF, loc.getBlockZ() & 0xF) - 1;
 
-                    if (loc.getY() < y) {
-                        return null;
-                    }
-                    loc.setY(y + 1);
-                } else {
-                    int y = loc.getWorld().getHighestBlockYAt(loc);
                     if (loc.getY() < y) {
                         return null;
                     }

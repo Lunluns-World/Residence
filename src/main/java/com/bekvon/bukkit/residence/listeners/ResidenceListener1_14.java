@@ -73,7 +73,13 @@ public class ResidenceListener1_14 implements Listener {
         }
         Player player = event.getPlayer();
 
-        if (FlagPermissions.shouldDenyAndNotify(player, event.getLectern().getLocation(), Flags.container, null)) {
+        if (FlagPermissions.shouldDenyAndNotify(player, event.getLectern().getLocation(), Flags.container, Flags.use)) {
+            event.setCancelled(true);
+            return;
+        }
+        Flags denied = ContainerTransferListener.deniedDirectTransfer(player, event.getLectern().getLocation(), ContainerTransferListener.TAKE, true);
+        if (denied != null) {
+            lm.Flag_Deny.sendMessage(player, denied);
             event.setCancelled(true);
         }
     }

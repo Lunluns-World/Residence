@@ -7,6 +7,7 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -57,7 +58,13 @@ import com.bekvon.bukkit.residence.economy.EconomyInterface;
 import com.bekvon.bukkit.residence.economy.EssentialsEcoAdapter;
 import com.bekvon.bukkit.residence.economy.TransactionManager;
 import com.bekvon.bukkit.residence.economy.rent.RentManager;
+import com.bekvon.bukkit.residence.crossserver.CrossServerListener;
+import com.bekvon.bukkit.residence.crossserver.CrossServerManager;
 import com.bekvon.bukkit.residence.gui.FlagUtil;
+import com.bekvon.bukkit.residence.gui.ResidenceGuiMetaManager;
+import com.bekvon.bukkit.residence.gui.ResidenceListGui;
+import com.bekvon.bukkit.residence.storage.DatabaseStorageManager;
+import com.bekvon.bukkit.residence.storage.StorageType;
 import com.bekvon.bukkit.residence.itemlist.WorldItemManager;
 import com.bekvon.bukkit.residence.listeners.ContainerTransferListener;
 import com.bekvon.bukkit.residence.listeners.CrackShotListener;
@@ -232,6 +239,38 @@ public class Residence extends JavaPlugin {
     private ResidenceInterface ResidenceAPI = null;
     private ChatInterface ChatAPI = null;
 
+    private DatabaseStorageManager databaseStorageManager = null;
+    private String storageServerName;
+    private CrossServerManager crossServerManager = null;
+    private ResidenceGuiMetaManager guiMetaManager = null;
+    private ResidenceListGui residenceListGui = null;
+
+    public DatabaseStorageManager getDatabaseStorageManager() {
+        return databaseStorageManager;
+    }
+
+    public void setDatabaseStorageManager(DatabaseStorageManager databaseStorageManager) {
+        this.databaseStorageManager = databaseStorageManager;
+    }
+
+    public CrossServerManager getCrossServerManager() {
+        if (crossServerManager == null)
+            crossServerManager = new CrossServerManager(this);
+        return crossServerManager;
+    }
+
+    public ResidenceGuiMetaManager getGuiMetaManager() {
+        if (guiMetaManager == null)
+            guiMetaManager = new ResidenceGuiMetaManager(this);
+        return guiMetaManager;
+    }
+
+    public ResidenceListGui getResidenceListGui() {
+        if (residenceListGui == null)
+            residenceListGui = new ResidenceListGui(this);
+        return residenceListGui;
+    }
+
     public ResidencePlayerInterface getPlayerManagerAPI() {
         if (PlayerAPI == null)
             PlayerAPI = PlayerManager;
@@ -355,14 +394,29 @@ public class Residence extends JavaPlugin {
             rentBukkitId.cancel();
         }
 
+        if (crossServerManager != null) {
+            crossServerManager.stop();
+        }
+
         if (initsuccess) {
             try {
                 saveYml();
+                if (guiMetaManager != null && (databaseStorageManager == null || !databaseStorageManager.isInitialized())) {
+                    guiMetaManager.saveYaml();
+                }
                 if (zip != null)
                     zip.backup();
             } catch (Exception ex) {
                 lm.consoleMessage("SEVERE SAVE ERROR");
                 ex.printStackTrace();
+            } finally {
+                if (databaseStorageManager != null && databaseStorageManager.isInitialized()) {
+                    try {
+                        databaseStorageManager.clearResidenceReservations(getStorageServerName());
+                    } catch (Exception ex) {
+                        getLogger().log(Level.WARNING, "Failed to clear quota reservations on disable", ex);
+                    }
+                }
             }
 
             getPlayerManager().onPluginStop();
@@ -566,12 +620,21 @@ public class Residence extends JavaPlugin {
 
             }
 
+            initDatabaseStorage();
+
             try {
                 this.loadYml();
             } catch (Exception e) {
                 this.getLogger().log(Level.SEVERE, "Unable to load save file", e);
                 throw e;
             }
+
+            getGuiMetaManager().load();
+            if (getCrossServerManager().isEnabled()) {
+                databaseStorageManager.syncLocalServerIndex(getStorageServerName(), getCrossServerManager().buildLocalEntriesSnapshot());
+                databaseStorageManager.clearResidenceReservations(getStorageServerName());
+            }
+            getCrossServerManager().start();
 
             getSignUtil().LoadSigns();
 
@@ -656,6 +719,8 @@ public class Residence extends JavaPlugin {
                 pm.registerEvents(new ResidenceEntityListener(this), this);
                 pm.registerEvents(new ShopListener(this), this);
                 pm.registerEvents(new ResidenceRaidListener(), this);
+                pm.registerEvents(getResidenceListGui(), this);
+                pm.registerEvents(new CrossServerListener(this), this);
 
                 if (Version.isCurrentLower(Version.v1_16_0)) {
                     pm.registerEvents(new DenyMessageCache_Legacy(), this);
@@ -1015,6 +1080,60 @@ public class Residence extends JavaPlugin {
         }
     }
 
+    public void reloadDatabaseAndCrossServer() {
+        if (crossServerManager != null) {
+            crossServerManager.stop();
+        }
+        if (guiMetaManager != null) {
+            guiMetaManager.load();
+        }
+        getCrossServerManager().start();
+    }
+
+    public String getStorageServerName() {
+        return storageServerName == null ? getConfigManager().getCrossServerName() : storageServerName;
+    }
+
+    private void initDatabaseStorage() {
+        storageServerName = getConfigManager().getCrossServerName();
+        StorageType storageType = getConfigManager().getStorageType();
+        if (!storageType.isDatabase()) {
+            databaseStorageManager = null;
+            return;
+        }
+        databaseStorageManager = new DatabaseStorageManager(
+                storageType,
+                dataFolder,
+                getConfigManager().getStorageSqliteFile(),
+                getConfigManager().getStorageHost(),
+                getConfigManager().getStoragePort(),
+                getConfigManager().getStorageDatabase(),
+                getConfigManager().getStorageUsername(),
+                getConfigManager().getStoragePassword(),
+                getConfigManager().getStorageTablePrefix(),
+                getConfigManager().getStorageParameters());
+        try {
+            databaseStorageManager.initialize();
+            databaseStorageManager.clearResidenceReservations(storageServerName);
+            lm.consoleMessage("Initialized " + storageType.name() + " database storage.");
+        } catch (Exception ex) {
+            databaseStorageManager = null;
+            throw new IllegalStateException("Failed to initialize " + storageType.name() + " database storage", ex);
+        }
+    }
+
+    public static void writeSaveRecord(File destination, Map<String, Object> records) throws IOException {
+        saveRecord(destination, records);
+    }
+
+    private static void moveAtomicallyOrReplace(Path source, Path target) throws IOException {
+        try {
+            Files.move(source, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        } catch (AtomicMoveNotSupportedException | UnsupportedOperationException ex) {
+            Files.move(source, target, StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
     private static void saveRecord(File destination, Map<String, Object> records) throws IOException {
         Path file = destination.toPath();
         Path directory = file.getParent();
@@ -1031,24 +1150,31 @@ public class Residence extends JavaPlugin {
                 Path backupTemporary = Files.createTempFile(backupDirectory, destination.getName() + ".", ".tmp");
                 try {
                     Files.copy(file, backupTemporary, StandardCopyOption.REPLACE_EXISTING);
-                    Files.move(backupTemporary, backup, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+                    moveAtomicallyOrReplace(backupTemporary, backup);
                 } finally {
                     Files.deleteIfExists(backupTemporary);
                 }
             }
-            Files.move(temporary, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            moveAtomicallyOrReplace(temporary, file);
         } finally {
             Files.deleteIfExists(temporary);
         }
     }
 
     private synchronized void saveYml() throws IOException {
+        boolean useDb = databaseStorageManager != null && databaseStorageManager.isInitialized();
+        boolean writeYaml = !useDb || getConfigManager().isStorageSyncWithYamlBackup();
+        String serverName = getStorageServerName();
+
         File saveFolder = new File(dataFolder, "Save");
         File worldFolder = new File(saveFolder, "Worlds");
-        for (Entry<String, Object> entry : getResidenceManager().save().entrySet()) {
+        Map<String, Object> savedWorlds = getResidenceManager().save();
+        Map<String, String> worldDocuments = new LinkedHashMap<>();
+        Map<File, Map<String, Object>> yamlDocuments = new LinkedHashMap<>();
+        for (Entry<String, Object> entry : savedWorlds.entrySet()) {
             String world = entry.getKey();
             File destination = new File(worldFolder, "res_" + getSaveWorldName(world) + ".yml");
-            if (entry.getValue() instanceof Map && ((Map<?, ?>) entry.getValue()).isEmpty() && !destination.isFile())
+            if (entry.getValue() instanceof Map && ((Map<?, ?>) entry.getValue()).isEmpty() && !destination.isFile() && !useDb)
                 continue;
 
             Map<String, Object> records = new LinkedHashMap<>();
@@ -1059,13 +1185,44 @@ public class Residence extends JavaPlugin {
             if (flags != null)
                 records.put("Flags", flags);
             records.put("Residences", entry.getValue());
-            saveRecord(destination, records);
+
+            if (useDb)
+                worldDocuments.put(world, YMLSaveHelper.dumpToString(records));
+            if (writeYaml)
+                yamlDocuments.put(destination, records);
         }
 
-        saveRecord(new File(saveFolder, "forsale.yml"), Collections.singletonMap("Economy", getTransactionManager().save()));
-        saveRecord(new File(saveFolder, "leases.yml"), Collections.singletonMap("Leases", getLeaseManager().save()));
-        saveRecord(new File(saveFolder, "permlists.yml"), Collections.singletonMap("PermissionLists", pmanager.save()));
-        saveRecord(new File(saveFolder, "rent.yml"), Collections.singletonMap("RentSystem", getRentManager().save()));
+        Map<String, Object> economyData = Collections.singletonMap("Economy", getTransactionManager().save());
+        Map<String, Object> leasesData = Collections.singletonMap("Leases", getLeaseManager().save());
+        Map<String, Object> permListsData = Collections.singletonMap("PermissionLists", pmanager.save());
+        Map<String, Object> rentData = Collections.singletonMap("RentSystem", getRentManager().save());
+
+        if (useDb) {
+            try {
+                Map<String, String> auxiliaryDocuments = new LinkedHashMap<>();
+                auxiliaryDocuments.put("forsale", YMLSaveHelper.dumpToString(economyData));
+                auxiliaryDocuments.put("leases", YMLSaveHelper.dumpToString(leasesData));
+                auxiliaryDocuments.put("permlists", YMLSaveHelper.dumpToString(permListsData));
+                auxiliaryDocuments.put("rent", YMLSaveHelper.dumpToString(rentData));
+                Map<String, Map<String, String>> documents = new LinkedHashMap<>();
+                documents.put("world", worldDocuments);
+                documents.put("aux", auxiliaryDocuments);
+                databaseStorageManager.saveDocuments(serverName, documents);
+                if (crossServerManager != null && crossServerManager.isEnabled()) {
+                    crossServerManager.syncLocalIndexNow();
+                }
+            } catch (Exception ex) {
+                throw new IOException("Failed saving auxiliary data to database", ex);
+            }
+        }
+        if (writeYaml) {
+            for (Entry<File, Map<String, Object>> entry : yamlDocuments.entrySet())
+                saveRecord(entry.getKey(), entry.getValue());
+            saveRecord(new File(saveFolder, "forsale.yml"), economyData);
+            saveRecord(new File(saveFolder, "leases.yml"), leasesData);
+            saveRecord(new File(saveFolder, "permlists.yml"), permListsData);
+            saveRecord(new File(saveFolder, "rent.yml"), rentData);
+        }
 
         if (getConfigManager().showIntervalMessages()) {
             System.out.println("[Residence] - Saved Residences...");
@@ -1133,8 +1290,140 @@ public class Residence extends JavaPlugin {
         loadFlags(worldName, yml);
     }
 
+    public YMLSaveHelper loadYmlWithBackup(File primaryFile) throws Exception {
+        File backupFile = new File(new File(primaryFile.getParentFile(), "Backup"), primaryFile.getName());
+        Exception primaryError = null;
+
+        if (primaryFile.isFile() && primaryFile.length() > 0) {
+            try {
+                YMLSaveHelper yml = new YMLSaveHelper(primaryFile);
+                yml.load();
+                if (yml.getRoot() != null)
+                    return yml;
+            } catch (Exception ex) {
+                primaryError = ex;
+            }
+        }
+
+        if (backupFile.isFile() && backupFile.length() > 0) {
+            try {
+                YMLSaveHelper backupYml = new YMLSaveHelper(backupFile);
+                backupYml.load();
+                if (backupYml.getRoot() != null) {
+                    getLogger().warning("Primary save file " + primaryFile.getName() + " was missing or corrupted; recovered from Backup/" + backupFile.getName());
+                    return backupYml;
+                }
+            } catch (Exception backupEx) {
+                if (primaryError != null)
+                    primaryError.addSuppressed(backupEx);
+                else
+                    primaryError = backupEx;
+            }
+        }
+
+        if (primaryError != null)
+            throw primaryError;
+        return null;
+    }
+
+    private void loadMessagesAndFlags(String worldName, Map<String, Object> root) {
+        if (root == null)
+            return;
+        if (root.containsKey("Messages")) {
+            HashMap<Integer, MinimizeMessages> c = getResidenceManager().getCacheMessages().get(worldName);
+            if (c == null)
+                c = new HashMap<Integer, MinimizeMessages>();
+            Map<Integer, Object> ms = (Map<Integer, Object>) root.get("Messages");
+            if (ms != null) {
+                for (Entry<Integer, Object> one : ms.entrySet()) {
+                    try {
+                        Map<String, String> msgs = (Map<String, String>) one.getValue();
+                        c.put(one.getKey(), new MinimizeMessages(one.getKey(), msgs.get("EnterMessage"), msgs.get("LeaveMessage")));
+                    } catch (Exception e) {
+                    }
+                }
+                getResidenceManager().getCacheMessages().put(worldName, c);
+            }
+        }
+        if (root.containsKey("Flags")) {
+            HashMap<Integer, MinimizeFlags> c = getResidenceManager().getCacheFlags().get(worldName);
+            if (c == null)
+                c = new HashMap<Integer, MinimizeFlags>();
+            Map<Integer, Object> ms = (Map<Integer, Object>) root.get("Flags");
+            if (ms != null) {
+                for (Entry<Integer, Object> one : ms.entrySet()) {
+                    try {
+                        HashMap<String, Boolean> msgs = (HashMap<String, Boolean>) one.getValue();
+                        c.put(one.getKey(), new MinimizeFlags(one.getKey(), msgs));
+                    } catch (Exception e) {
+                    }
+                }
+                getResidenceManager().getCacheFlags().put(worldName, c);
+            }
+        }
+    }
+
+    @SuppressWarnings({ "rawtypes", "unchecked" })
+    private boolean loadFromDatabase() throws Exception {
+        String serverName = getStorageServerName();
+        Map<String, Map<String, String>> documents = databaseStorageManager.loadDocuments(serverName);
+        if (documents.isEmpty())
+            return false;
+        Map<String, String> worldPayloads = documents.getOrDefault("world", Collections.emptyMap());
+        Map<String, String> auxiliary = documents.getOrDefault("aux", Collections.emptyMap());
+
+        HashMap<String, Object> worlds = new HashMap<>();
+        for (Entry<String, String> entry : worldPayloads.entrySet()) {
+            String worldName = entry.getKey();
+            Map<String, Object> root = YMLSaveHelper.loadFromString(entry.getValue());
+            if (root == null)
+                continue;
+            loadMessagesAndFlags(worldName, root);
+            worlds.put(worldName, root.get("Residences"));
+        }
+
+        getResidenceManager().load(worlds);
+        Map<String, ClaimedResidence> resList = getResidenceManager().getResidences();
+        for (Entry<String, ClaimedResidence> one : resList.entrySet()) {
+            this.getResidenceManager().addShops(one.getValue());
+        }
+
+        String forsale = auxiliary.get("forsale");
+        if (forsale != null) {
+            Map<String, Object> root = YMLSaveHelper.loadFromString(forsale);
+            if (root != null)
+                getTransactionManager().load((Map) root.get("Economy"));
+        }
+        String leases = auxiliary.get("leases");
+        if (leases != null) {
+            Map<String, Object> root = YMLSaveHelper.loadFromString(leases);
+            if (root != null)
+                getLeaseManager().load((Map) root.get("Leases"));
+        }
+        String permlists = auxiliary.get("permlists");
+        if (permlists != null) {
+            Map<String, Object> root = YMLSaveHelper.loadFromString(permlists);
+            if (root != null)
+                pmanager = getPermissionListManager().load((Map) root.get("PermissionLists"));
+        }
+        String rent = auxiliary.get("rent");
+        if (rent != null) {
+            Map<String, Object> root = YMLSaveHelper.loadFromString(rent);
+            if (root != null)
+                getRentManager().load((Map) root.get("RentSystem"));
+        }
+
+        lm.consoleMessage("Loaded " + worlds.size() + " world(s) from " + databaseStorageManager.getStorageType().name() + " database.");
+        return true;
+    }
+
     @SuppressWarnings({ "rawtypes", "unchecked" })
     protected boolean loadYml() throws Exception {
+        if (databaseStorageManager != null && databaseStorageManager.isInitialized()) {
+            if (loadFromDatabase()) {
+                return true;
+            }
+        }
         File saveFolder = new File(dataFolder, "Save");
         try {
             File worldFolder = new File(saveFolder, "Worlds");
@@ -1153,7 +1442,8 @@ public class Residence extends JavaPlugin {
 
             for (String worldName : this.getResidenceManager().getWorldNames()) {
                 loadFile = new File(worldFolder, saveFilePrefix + getSaveWorldName(worldName) + ".yml");
-                if (!loadFile.isFile())
+                File backupFile = new File(new File(worldFolder, "Backup"), loadFile.getName());
+                if (!loadFile.isFile() && !backupFile.isFile())
                     continue;
 
                 time = System.currentTimeMillis();
@@ -1161,9 +1451,8 @@ public class Residence extends JavaPlugin {
                 if (!isDisabledWorld(worldName) && !this.getConfigManager().CleanerStartupLog)
                     lm.consoleMessage("Loading save data for world " + worldName + "...");
 
-                yml = new YMLSaveHelper(loadFile);
-                yml.load();
-                if (yml.getRoot() == null)
+                yml = loadYmlWithBackup(loadFile);
+                if (yml == null || yml.getRoot() == null)
                     continue;
 
                 loadMessagesAndFlags(worldName, yml);
@@ -1186,36 +1475,24 @@ public class Residence extends JavaPlugin {
             }
 
             loadFile = new File(saveFolder, "forsale.yml");
-            if (loadFile.isFile()) {
-                yml = new YMLSaveHelper(loadFile);
-                yml.load();
-                Map<String, Object> root = yml.getRoot();
-                if (root != null)
-                    getTransactionManager().load((Map) root.get("Economy"));
+            yml = loadYmlWithBackup(loadFile);
+            if (yml != null && yml.getRoot() != null) {
+                getTransactionManager().load((Map) yml.getRoot().get("Economy"));
             }
             loadFile = new File(saveFolder, "leases.yml");
-            if (loadFile.isFile()) {
-                yml = new YMLSaveHelper(loadFile);
-                yml.load();
-                Map<String, Object> root = yml.getRoot();
-                if (root != null)
-                    getLeaseManager().load((Map) root.get("Leases"));
+            yml = loadYmlWithBackup(loadFile);
+            if (yml != null && yml.getRoot() != null) {
+                getLeaseManager().load((Map) yml.getRoot().get("Leases"));
             }
             loadFile = new File(saveFolder, "permlists.yml");
-            if (loadFile.isFile()) {
-                yml = new YMLSaveHelper(loadFile);
-                yml.load();
-                Map<String, Object> root = yml.getRoot();
-                if (root != null)
-                    pmanager = getPermissionListManager().load((Map) root.get("PermissionLists"));
+            yml = loadYmlWithBackup(loadFile);
+            if (yml != null && yml.getRoot() != null) {
+                pmanager = getPermissionListManager().load((Map) yml.getRoot().get("PermissionLists"));
             }
             loadFile = new File(saveFolder, "rent.yml");
-            if (loadFile.isFile()) {
-                yml = new YMLSaveHelper(loadFile);
-                yml.load();
-                Map<String, Object> root = yml.getRoot();
-                if (root != null)
-                    getRentManager().load((Map) root.get("RentSystem"));
+            yml = loadYmlWithBackup(loadFile);
+            if (yml != null && yml.getRoot() != null) {
+                getRentManager().load((Map) yml.getRoot().get("RentSystem"));
             }
 
             return true;

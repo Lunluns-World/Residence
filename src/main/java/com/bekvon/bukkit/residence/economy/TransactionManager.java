@@ -252,11 +252,11 @@ public class TransactionManager implements MarketBuyInterface {
                         lm.Residence_NotForRentOrSell.sendMessage(player);
                         return false;
                     }
-                    if (econ.transfer(player.getUniqueId(), sellerId, amount))
+                    if (amount == 0 || econ.transfer(player.getUniqueId(), sellerId, amount))
                         return true;
                     player.sendMessage(CMIChatColor.RED + "Error, could not transfer " + amount + " from " + buyerName + " to " + sellerDisplayName);
                     return false;
-                });
+                }, resadmin || group.buyLandIgnoreLimits() ? null : player);
                 if (!changed)
                     return;
                 removeFromSale(res);

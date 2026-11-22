@@ -63,59 +63,60 @@ public class ResidenceListener1_21 implements Listener {
 
         Entity vehicle = event.getVehicle();
 
-        if (FlagPermissions.shouldIgnoreCheck(Flags.leash, vehicle)) {
+        if (plugin.isDisabledWorldListener(vehicle)) {
             return;
         }
-        if (!(vehicle instanceof Boat))
-            return;
 
         Entity entity = event.getEntered();
 
-        if (!(entity instanceof LivingEntity) || !Utils.isAnimal(entity))
+        if (entity instanceof Player)
             return;
 
-        if (Version.isPaperBranch()) {
-            // if vehicle is not leashed, skip check
-            if (vehicle instanceof io.papermc.paper.entity.Leashable
-                    && !((io.papermc.paper.entity.Leashable) vehicle).isLeashed()) {
+        boolean leashed = false;
+        Entity leashHolder = null;
+        if (vehicle instanceof io.papermc.paper.entity.Leashable) {
+            io.papermc.paper.entity.Leashable leashable = (io.papermc.paper.entity.Leashable) vehicle;
+            leashed = leashable.isLeashed();
+            if (leashed) {
+                try {
+                    leashHolder = leashable.getLeashHolder();
+                } catch (IllegalStateException ignored) {
+                }
+            }
+        }
+        if (!leashed) {
+            return;
+        }
+
+        Player holderPlayer = leashHolder instanceof Player ? (Player) leashHolder : null;
+        if (holderPlayer != null) {
+            if (holderPlayer.hasMetadata("NPC") || ResAdmin.isResAdmin(holderPlayer)) {
                 return;
             }
-
-        } else if (Version.isCurrentEqualOrHigher(Version.v1_21_11)) {
-            // spigot
-            if (vehicle instanceof org.bukkit.entity.Leashable
-                    && !((org.bukkit.entity.Leashable) vehicle).isLeashed()) {
+            if (Flags.leash.isGlobalyEnabled()
+                    && (FlagPermissions.shouldDenyAndNotify(holderPlayer, entity.getLocation(), Flags.leash, null)
+                            || FlagPermissions.shouldDenyAndNotify(holderPlayer, vehicle.getLocation(), Flags.leash, null))) {
+                event.setCancelled(true);
                 return;
             }
-
-        }
-
-        ClaimedResidence res = plugin.getResidenceManager().getByLoc(entity.getLocation());
-        if (res == null)
-            return;
-
-        Player closest = null;
-        double dist = 32D;
-
-        for (Player player : res.getPlayersInResidence()) {
-
-            double tempDist = player.getLocation().distance(entity.getLocation());
-
-            if (tempDist < dist) {
-                closest = player;
-                dist = tempDist;
+            if (Flags.boarding.isGlobalyEnabled()
+                    && (FlagPermissions.shouldDenyAndNotify(holderPlayer, entity.getLocation(), Flags.boarding, null)
+                            || FlagPermissions.shouldDenyAndNotify(holderPlayer, vehicle.getLocation(), Flags.boarding, null))) {
+                event.setCancelled(true);
+                return;
             }
-        }
-
-        if (closest == null)
-            return;
-
-        if (closest.hasMetadata("NPC") || ResAdmin.isResAdmin(closest)) {
-            return;
-        }
-        if (res.getPermissions().playerHas(closest, Flags.leash, FlagCombo.OnlyFalse)) {
-            lm.Residence_FlagDeny.sendMessage(closest, Flags.leash, res.getName());
-            event.setCancelled(true);
+        } else {
+            if (Flags.leash.isGlobalyEnabled()
+                    && (FlagPermissions.has(entity.getLocation(), Flags.leash, FlagCombo.OnlyFalse)
+                            || FlagPermissions.has(vehicle.getLocation(), Flags.leash, FlagCombo.OnlyFalse))) {
+                event.setCancelled(true);
+                return;
+            }
+            if (Flags.boarding.isGlobalyEnabled()
+                    && (FlagPermissions.has(entity.getLocation(), Flags.boarding, FlagCombo.OnlyFalse)
+                            || FlagPermissions.has(vehicle.getLocation(), Flags.boarding, FlagCombo.OnlyFalse))) {
+                event.setCancelled(true);
+            }
         }
     }
 
@@ -172,23 +173,30 @@ public class ResidenceListener1_21 implements Listener {
 
     public static boolean shouldDenyInteractCopperGolem(Player player, Entity entity, ItemStack itemStack) {
 
+        if (Flags.copper.isGlobalyEnabled() && itemStack != null) {
+            Material held = itemStack.getType();
+            // Honeycomb and Axes can change CopperGolem
+            if (held == Material.HONEYCOMB || isItemTag(held, "axes")) {
+                if (FlagPermissions.shouldDenyAndNotify(player, entity, Flags.copper, Flags.animalkilling)) {
+                    return true;
+                }
+            }
+        }
         if (Flags.container.isGlobalyEnabled()) {
             EntityEquipment golemInv = ((LivingEntity) entity).getEquipment();
             // Right-click to remove items from holding copper_golem
             if (golemInv != null && golemInv.getItemInMainHand().getType() != Material.AIR) {
-                return FlagPermissions.shouldDenyAndNotify(player, entity, Flags.container, null);
+                if (FlagPermissions.shouldDenyAndNotify(player, entity, Flags.container, Flags.use))
+                    return true;
+                Flags denied = ContainerTransferListener.deniedDirectTransfer(player, entity.getLocation(), ContainerTransferListener.TAKE, false);
+                if (denied != null) {
+                    lm.Flag_Deny.sendMessage(player, denied);
+                    return true;
+                }
+                return false;
             }
         }
-        // Now Copper_golem has no item in hand
-        if (!Flags.copper.isGlobalyEnabled() || itemStack == null) {
-            return false;
-        }
-        Material held = itemStack.getType();
-        // Honeycomb and Axes can change CopperGolem
-        if (held != Material.HONEYCOMB && !isItemTag(held, "axes")) {
-            return false;
-        }
-        return FlagPermissions.shouldDenyAndNotify(player, entity, Flags.copper, Flags.animalkilling);
+        return false;
     }
 
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
@@ -328,15 +336,23 @@ public class ResidenceListener1_21 implements Listener {
             return;
 
         Material held = ResidenceListener1_09.getHeldMaterial(event);
+        CMIMaterial cmiHeld = CMIMaterial.get(held);
 
         // check if held item and interacted entity match
         // if conditions match, also check if the target entity slot is Air
-        if (!isEquipFitAnimal((Animals) entity, CMIMaterial.get(held)))
+        if (!isEquipFitAnimal((Animals) entity, cmiHeld))
             return;
 
         Player player = event.getPlayer();
 
-        if (FlagPermissions.shouldDenyAndNotify(player, entity, Flags.container, null)) {
+        if (FlagPermissions.shouldDenyAndNotify(player, entity, Flags.container, Flags.use)) {
+            event.setCancelled(true);
+            return;
+        }
+        int transfer = cmiHeld == CMIMaterial.SHEARS ? ContainerTransferListener.TAKE : ContainerTransferListener.PUT;
+        Flags denied = ContainerTransferListener.deniedDirectTransfer(player, entity.getLocation(), transfer, false);
+        if (denied != null) {
+            lm.Flag_Deny.sendMessage(player, denied);
             event.setCancelled(true);
         }
     }
@@ -345,6 +361,9 @@ public class ResidenceListener1_21 implements Listener {
         CMIEntityType type = CMIEntityType.get(entity);
         if (type == null) {
             return false;
+        }
+        if (held == CMIMaterial.CHEST && entity instanceof org.bukkit.entity.ChestedHorse) {
+            return !((org.bukkit.entity.ChestedHorse) entity).isCarryingChest();
         }
         if (held == CMIMaterial.SADDLE) {
             switch (type) {
@@ -393,6 +412,14 @@ public class ResidenceListener1_21 implements Listener {
         case NAUTILUS:
         case ZOMBIE_NAUTILUS:
             return held.containsCriteria(CMIMC.NAUTILUSARMOR) && isSlotAir(entity, EquipmentSlot.BODY);
+        case WOLF:
+            if (held == CMIMaterial.WOLF_ARMOR) {
+                return isSlotAir(entity, EquipmentSlot.BODY);
+            }
+            if (held == CMIMaterial.SHEARS) {
+                return !isSlotAir(entity, EquipmentSlot.BODY);
+            }
+            return false;
         default:
             return false;
         }

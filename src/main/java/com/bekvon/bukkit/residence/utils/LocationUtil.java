@@ -469,7 +469,7 @@ public class LocationUtil {
                     return cmiChunkSnapshot;
                 });
             }
-            future = PaperLib.getChunkAtAsync(world, chunkX, chunkZ, generate);
+            future = world.getChunkAtAsync(chunkX, chunkZ, generate);
         } catch (Throwable e) {
             e.printStackTrace();
         }

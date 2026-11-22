@@ -24,8 +24,7 @@ public class YMLSaveHelper {
     Yaml yml = null;
     Map<String, Object> root;
 
-    public YMLSaveHelper(File ymlfile) throws IOException {
-
+    private static Yaml createYaml() {
         final YamlConstructor constructor = new YamlConstructor();
         final YamlRepresenter representer = new YamlRepresenter();
         representer.setDefaultFlowStyle(FlowStyle.BLOCK);
@@ -41,12 +40,25 @@ public class YMLSaveHelper {
             final LoaderOptions loaderOptions = new LoaderOptions();
             loaderOptions.setMaxAliasesForCollections(Integer.MAX_VALUE);
             loaderOptions.getClass().getMethod("setCodePointLimit", int.class).invoke(loaderOptions, Integer.MAX_VALUE);
-            yml = new Yaml(constructor, representer, dumperOptions, loaderOptions);
+            return new Yaml(constructor, representer, dumperOptions, loaderOptions);
         } catch (Throwable e) {
+            return new Yaml(constructor, representer, dumperOptions);
         }
+    }
 
-        if (yml == null)
-            yml = new Yaml(constructor, representer, dumperOptions);
+    public static String dumpToString(Map<String, Object> data) {
+        return createYaml().dump(data);
+    }
+
+    @SuppressWarnings("unchecked")
+    public static Map<String, Object> loadFromString(String content) {
+        if (content == null || content.trim().isEmpty())
+            return null;
+        return (Map<String, Object>) createYaml().load(content);
+    }
+
+    public YMLSaveHelper(File ymlfile) throws IOException {
+        yml = createYaml();
 
         root = new LinkedHashMap<String, Object>();
         if (ymlfile == null)

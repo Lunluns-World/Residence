@@ -64,6 +64,7 @@ public class FlagPermissions {
     protected Map<String, Map<String, Boolean>> groupFlags = new ConcurrentHashMap<String, Map<String, Boolean>>();
     public Map<String, Boolean> cuboidFlags = new ConcurrentHashMap<String, Boolean>();
     protected FlagPermissions parent;
+    protected boolean inheritParentFlags = true;
 
     public FlagPermissions() {
         cuboidFlags = new ConcurrentHashMap<String, Boolean>();
@@ -225,6 +226,10 @@ public class FlagPermissions {
         return validFlagGroups.containsKey(group.toLowerCase());
     }
 
+    public static HashMap<String, HashMap<String, FlagState>> getValidFlagGroups() {
+        return validFlagGroups;
+    }
+
     public static void initValidFlags() {
         validAreaFlags.clear();
         validPlayerFlags.clear();
@@ -291,6 +296,9 @@ public class FlagPermissions {
 
                 if (one.containsCriteria(CMIMC.SHELF))
                     addMaterialToUseFlag(one.getMaterial(), Flags.container);
+
+                if (one.name().endsWith("COPPER_GOLEM_STATUE"))
+                    addMaterialToUseFlag(one.getMaterial(), Flags.use);
             }
 
         }
@@ -367,7 +375,16 @@ public class FlagPermissions {
         }
 
         if (Version.isCurrentEqualOrHigher(Version.v1_21_0)) {
-            addMaterialToUseFlag(CMIMaterial.CRAFTER.getMaterial(), Flags.table);
+            addMaterialToUseFlag(CMIMaterial.CRAFTER.getMaterial(), Flags.container);
+            addMaterialToUseFlag(CMIMaterial.VAULT.getMaterial(), Flags.container);
+        }
+
+        if (Version.isCurrentEqualOrHigher(Version.v1_21_9)) {
+            for (Material mat : Material.values()) {
+                if (mat.name().endsWith("COPPER_GOLEM_STATUE")) {
+                    addMaterialToUseFlag(mat, Flags.use);
+                }
+            }
         }
 
     }
@@ -855,6 +872,10 @@ public class FlagPermissions {
             root.put("AreaFlags", min.getId());
         }
 
+        if (!inheritParentFlags) {
+            root.put("InheritParentFlags", false);
+        }
+
         return root;
     }
 
@@ -963,6 +984,10 @@ public class FlagPermissions {
             }
         } else
             newperms.cuboidFlags = Residence.getInstance().getConfigManager().getGlobalResidenceDefaultFlags().getFlags();
+
+        if (root.containsKey("InheritParentFlags") && root.get("InheritParentFlags") instanceof Boolean) {
+            newperms.inheritParentFlags = (Boolean) root.get("InheritParentFlags");
+        }
 
         String ownerName = null;
         UUID uuid = null;
@@ -1706,12 +1731,26 @@ public class FlagPermissions {
         return parent;
     }
 
+    public boolean isInheritParentFlags() {
+        return inheritParentFlags;
+    }
+
+    public void setInheritParentFlags(boolean inheritParentFlags) {
+        this.inheritParentFlags = inheritParentFlags;
+        if (!inheritParentFlags)
+            this.parent = null;
+    }
+
     public Map<UUID, Map<String, Boolean>> getPlayerFlags() {
         return playerFlags;
     }
 
     public Map<String, Map<String, Boolean>> getPlayerFlagsByName() {
         return playerFlagsByName;
+    }
+
+    public Map<String, Map<String, Boolean>> getGroupFlags() {
+        return groupFlags;
     }
 
     public List<String> getCMDWhiteList() {
@@ -1794,7 +1833,8 @@ public class FlagPermissions {
         // if subFlag is not needed, please pass null
         boolean result = (subFlag == null || perms.playerHas(player, subFlag, true));
         // if mainFlag is in None state -> use subFlag result
-        if (perms.playerHas(player, mainFlag, result) || ResAdmin.isResAdmin(player)) {
+        if (perms.playerHas(player, mainFlag, result) || ResAdmin.isResAdmin(player)
+                || (mainFlag == Flags.container && ResPerm.bypass_container.hasPermission(player, 10000L))) {
             return false;
         }
         // if mainFlag state is false, deny (and notify if requested)

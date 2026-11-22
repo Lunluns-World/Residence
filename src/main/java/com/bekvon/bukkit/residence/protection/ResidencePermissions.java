@@ -412,6 +412,11 @@ public class ResidencePermissions extends FlagPermissions {
                 lm.General_NoPermission.sendMessage(sender);
                 return false;
             }
+            if (this.residence != null && this.residence.isRented() && !this.residence.isOwner(sender)
+                    && (f == Flags.bank || f == Flags.backup)) {
+                lm.General_NoPermission.sendMessage(sender);
+                return false;
+            }
             if (isFlagPermissionDenied(sender, flag)
                     || (checkFlagAccess && !hasFlagAccess(this.getOwnerUUID(), flag) && !ResPerm.flag_$1.hasPermission(sender, 10000L, flag))) {
                 lm.Flag_SetFailed.sendMessage(sender, flag);
@@ -631,6 +636,12 @@ public class ResidencePermissions extends FlagPermissions {
                         break;
                     }
                 }
+                if (residence != null && residence.isTopArea()
+                        && (Flags.tp.toString().equalsIgnoreCase(flag) || Flags.hidden.toString().equalsIgnoreCase(flag))
+                        && Residence.getInstance().getCrossServerManager() != null
+                        && Residence.getInstance().getCrossServerManager().isEnabled()) {
+                    Residence.getInstance().getCrossServerManager().triggerAsyncSync();
+                }
                 return true;
             }
         }
@@ -778,9 +789,11 @@ public class ResidencePermissions extends FlagPermissions {
             return;
         FlagPermissions dflags = Residence.getInstance().getConfigManager().getGlobalRentedDefaultFlags();
         Map<String, Boolean> dgflags = dflags.getFlags();
-        if (this.residence.rentedland == null || this.residence.rentedland.getRenterName() == null)
+        if (this.residence.rentedland == null || !this.residence.rentedland.hasValidRenter())
             return;
         UUID player = this.residence.rentedland.getUniqueId();
+        if (player == null)
+            return;
         this.removeAllPlayerFlags(player);
         for (Entry<String, Boolean> entry : dgflags.entrySet()) {
             this.setPlayerFlag(player, entry.getKey(), entry.getValue() ? FlagState.TRUE : FlagState.FALSE);
@@ -796,22 +809,66 @@ public class ResidencePermissions extends FlagPermissions {
     }
 
     public boolean setOwner(UUID uuid, boolean resetFlags, BooleanSupplier beforeOwnershipChange) {
+        return setOwner(uuid, resetFlags, beforeOwnershipChange, null);
+    }
+
+    public boolean setOwner(UUID uuid, boolean resetFlags, BooleanSupplier beforeOwnershipChange, Player quotaActor) {
         String name = ResidencePlayer.getName(uuid);
 
         ResidenceOwnerChangeEvent ownerchange = new ResidenceOwnerChangeEvent(residence, name, uuid);
         Residence.getInstance().getServ().getPluginManager().callEvent(ownerchange);
 
-        if (ownerchange.isCancelled() || !beforeOwnershipChange.getAsBoolean())
+        if (ownerchange.isCancelled())
             return false;
 
-        Residence.getInstance().getPlayerManager().removeResFromPlayer(residence.getOwnerUUID(), residence);
-        Residence.getInstance().getPlayerManager().addResidence(uuid, residence);
+        Residence plugin = Residence.getInstance();
+        String key = residence.getName().toLowerCase(java.util.Locale.ROOT);
+        UUID previousOwner = this.ownerUUID;
+        boolean globalQuota = residence.isTopArea() && plugin.getCrossServerManager() != null
+                && plugin.getCrossServerManager().usesGlobalQuota();
+        boolean reserved = quotaActor != null && !uuid.equals(previousOwner) && globalQuota;
+        com.bekvon.bukkit.residence.storage.DatabaseStorageManager.ReservationResult reservation = null;
+        if (reserved) {
+            lm limitMsg = quotaActor.getUniqueId().equals(uuid) ? lm.Residence_TooMany : lm.Residence_GiveLimits;
+            reservation = plugin.getCrossServerManager().reserveResidenceWithPrevious(uuid, key, ResidencePlayer.get(uuid).getMaxRes(), quotaActor, limitMsg);
+            if (!reservation.isReserved())
+                return false;
+        }
 
-        ownerLastKnownName = name;
-        ownerUUID = uuid;
+        boolean committed = false;
+        try {
+            if (!beforeOwnershipChange.getAsBoolean())
+                return false;
+            plugin.getPlayerManager().removeResFromPlayer(residence.getOwnerUUID(), residence);
+            plugin.getPlayerManager().addResidence(uuid, residence);
+            ownerLastKnownName = name;
+            ownerUUID = uuid;
+            committed = true;
+        } finally {
+            if (reserved && !committed) {
+                if (reservation != null && reservation.getDisplacedOwner() != null) {
+                    plugin.getCrossServerManager().restoreResidenceReservation(reservation.getDisplacedOwner(), key);
+                } else {
+                    plugin.getCrossServerManager().releaseResidenceReservation(uuid, key);
+                }
+            }
+        }
+
+        if (!reserved && globalQuota && !uuid.equals(previousOwner)) {
+            if (uuid != null && !uuid.equals(plugin.getServerUUID())) {
+                plugin.getCrossServerManager().restoreResidenceReservation(uuid, key);
+            } else {
+                plugin.getCrossServerManager().releaseResidenceReservation(null, key);
+            }
+        }
 
         if (resetFlags)
             this.applyDefaultFlags();
+
+        if (residence != null && residence.isTopArea() && Residence.getInstance().getCrossServerManager() != null
+                && Residence.getInstance().getCrossServerManager().isEnabled()) {
+            Residence.getInstance().getCrossServerManager().triggerAsyncSync();
+        }
 
         return true;
     }
@@ -825,6 +882,7 @@ public class ResidencePermissions extends FlagPermissions {
         if (ownerchange.isCancelled())
             return;
 
+        UUID previousOwner = this.ownerUUID;
         Residence.getInstance().getPlayerManager().removeResFromPlayer(residence.getOwnerUUID(), residence);
 
         ownerLastKnownName = newOwner;
@@ -849,6 +907,20 @@ public class ResidencePermissions extends FlagPermissions {
         Residence.getInstance().getPlayerManager().addResidence(ownerUUID, residence);
         if (resetFlags)
             this.applyDefaultFlags();
+
+        if (residence != null && residence.isTopArea() && Residence.getInstance().getCrossServerManager() != null) {
+            if (Residence.getInstance().getCrossServerManager().usesGlobalQuota() && (previousOwner == null || !previousOwner.equals(ownerUUID))) {
+                String resKey = residence.getName().toLowerCase(java.util.Locale.ROOT);
+                if (ownerUUID != null && !ownerUUID.equals(Residence.getInstance().getServerUUID())) {
+                    Residence.getInstance().getCrossServerManager().restoreResidenceReservation(ownerUUID, resKey);
+                } else {
+                    Residence.getInstance().getCrossServerManager().releaseResidenceReservation(null, resKey);
+                }
+            }
+            if (Residence.getInstance().getCrossServerManager().isEnabled()) {
+                Residence.getInstance().getCrossServerManager().triggerAsyncSync();
+            }
+        }
     }
 
     public String getOwner() {

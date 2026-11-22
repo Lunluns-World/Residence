@@ -59,6 +59,7 @@ import org.bukkit.event.player.PlayerToggleFlightEvent;
 import org.bukkit.event.player.PlayerUnleashEntityEvent;
 import org.bukkit.event.vehicle.VehicleEnterEvent;
 import org.bukkit.event.vehicle.VehicleMoveEvent;
+import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.InventoryHolder;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.metadata.FixedMetadataValue;
@@ -294,21 +295,28 @@ public class ResidencePlayerListener implements Listener {
         event.setFormat(format);
     }
 
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
     public void onResidenceBackup(ResidenceFlagChangeEvent event) {
         if (!event.getFlag().equalsIgnoreCase(Flags.backup.toString()))
             return;
         Player player = event.getPlayer();
+        if (event.getResidence() != null && event.getResidence().isRented()) {
+            event.setCancelled(true);
+            return;
+        }
         if (!plugin.getConfigManager().RestoreAfterRentEnds)
             return;
         if (!plugin.getConfigManager().SchematicsSaveOnFlagChange)
             return;
         if (plugin.getSchematicManager() == null)
             return;
-        if (player != null && !ResPerm.backup.hasPermission(player))
+        if (player != null && !ResPerm.backup.hasPermission(player)) {
             event.setCancelled(true);
-        else
+            return;
+        }
+        if (event.getNewState() == FlagState.TRUE) {
             plugin.getSchematicManager().save(event.getResidence());
+        }
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -330,7 +338,7 @@ public class ResidencePlayerListener implements Listener {
         if (!plugin.getConfigManager().isRentInformOnEnding())
             return;
         final Player player = event.getPlayer();
-        CMIScheduler.runTaskLater(plugin, () -> {
+        player.getScheduler().runDelayed(plugin, task -> {
             if (!player.isOnline())
                 return;
             List<ClaimedResidence> list = plugin.getRentManager().getRentedLandsList(player.getUniqueId());
@@ -346,7 +354,7 @@ public class ResidencePlayerListener implements Listener {
                     lm.Residence_EndingRent.sendMessage(player, one, GetTime.getTime(rentedland.endTime));
                 }
             }
-        }, plugin.getConfigManager().getRentInformDelay() * 20L);
+        }, null, plugin.getConfigManager().getRentInformDelay() * 20L);
     }
 
     @EventHandler(priority = EventPriority.NORMAL, ignoreCancelled = true)
@@ -360,15 +368,12 @@ public class ResidencePlayerListener implements Listener {
         if (FlagPermissions.shouldIgnoreCheck(Flags.hook, player)) {
             return;
         }
-        if (event.getCaught() == null)
+        Entity caught = event.getCaught();
+        if (caught == null)
             return;
-        if ((Utils.isArmorStand(event.getCaught()) || event.getCaught() instanceof Boat || event.getCaught() instanceof LivingEntity) && !ResAdmin.isResAdmin(player)) {
-            FlagPermissions perm = FlagPermissions.getPerms(event.getCaught().getLocation());
-            ClaimedResidence res = ClaimedResidence.getByLoc(event.getCaught().getLocation());
-            if (perm.has(Flags.hook, FlagCombo.OnlyFalse)) {
+        if (Utils.isArmorStand(caught) || caught instanceof Vehicle || caught instanceof LivingEntity) {
+            if (FlagPermissions.shouldDenyAndNotify(player, caught, Flags.hook, null)) {
                 event.setCancelled(true);
-                if (res != null)
-                    lm.Residence_FlagDeny.sendMessage(player, Flags.hook, res.getName());
             }
         }
     }
@@ -800,6 +805,13 @@ public class ResidencePlayerListener implements Listener {
             return;
         }
 
+        ClaimedResidence currentRes = plugin.getResidenceManager().getByLoc(loc);
+        if (!ResAdmin.isResAdmin(player)
+                && (!res.isOwner(player) || (currentRes != null && !currentRes.isOwner(player)))) {
+            lm.Residence_NotOwner.sendMessage(player);
+            return;
+        }
+
         if (res.getSignsInResidence().size() >= plugin.getConfigManager().getSignsMaxPerResidence()) {
             lm.Sign_TooMany.sendMessage(player);
             return;
@@ -812,7 +824,7 @@ public class ResidencePlayerListener implements Listener {
         plugin.getSignUtil().getSigns().addSign(signInfo);
         plugin.getSignUtil().saveSigns();
 
-        CMIScheduler.runTaskLater(plugin, () -> plugin.getSignUtil().checkSign(residence), 5L);
+        Bukkit.getRegionScheduler().runDelayed(plugin, loc, task -> plugin.getSignUtil().checkSign(residence), 5L);
     }
 
     @EventHandler(priority = EventPriority.LOW, ignoreCancelled = true)
@@ -911,7 +923,7 @@ public class ResidencePlayerListener implements Listener {
             ResAdmin.turnResAdminOn(player);
         }
 
-        CMIScheduler.runAtEntityLater(plugin, player, () -> {
+        player.getScheduler().runDelayed(plugin, task -> {
             handleNewLocation(player, player.getLocation(), true);
             ClaimedResidence res = plugin.getResidenceManager().getByLoc(player.getLocation());
             if (res != null) {
@@ -920,7 +932,7 @@ public class ResidencePlayerListener implements Listener {
                 else if (Flags.wspeed2.isGlobalyEnabled() && res.getPermissions().has(Flags.wspeed2, FlagCombo.OnlyTrue))
                     player.setWalkSpeed(plugin.getConfigManager().getWalkSpeed2().floatValue());
             }
-        }, 1L);
+        }, null, 1L);
 
         plugin.getPlayerManager().playerJoin(player);
 
@@ -1083,7 +1095,7 @@ public class ResidencePlayerListener implements Listener {
     // still exist
     private void handlePlayerInteractBuild(PlayerInteractEvent event, Player player, Block block) {
 
-        if (!Flags.place.isGlobalyEnabled()) {
+        if (!Flags.place.isGlobalyEnabled() && !Flags.build.isGlobalyEnabled() && !Flags.destroy.isGlobalyEnabled()) {
             return;
         }
         if (event.useInteractedBlock() == Result.DENY) {
@@ -1095,19 +1107,41 @@ public class ResidencePlayerListener implements Listener {
             CMIMaterial blockType = CMIMaterial.get(block.getType());
             CMIMaterial heldItem = CMIMaterial.get(event.getItem());
 
+            if (blockType == CMIMaterial.END_PORTAL_FRAME && heldItem == CMIMaterial.ENDER_EYE) {
+                if (shouldDenyEndPortalActivation(player, block)) {
+                    event.setCancelled(true);
+                }
+                return;
+            }
+            if (isBuildClickBlockTop(blockType, heldItem)) {
+                if (shouldDenyEndCrystalPlacement(player, block, blockType)) {
+                    event.setCancelled(true);
+                }
+                return;
+            }
+            if (heldItem.containsCriteria(CMIMC.SPAWNEGG) && blockType != CMIMaterial.SPAWNER && blockType != CMIMaterial.TRIAL_SPAWNER) {
+                Location spawnLoc = block.getRelative(event.getBlockFace()).getLocation();
+                if (shouldDenySpawnEggInteract(player, spawnLoc, heldItem)) {
+                    event.setCancelled(true);
+                }
+                return;
+            }
+
             if (isBuildClickBlock(blockType, heldItem, player)) {
                 loc = block.getLocation();
 
             } else if (isBuildClickBlockFace(blockType, heldItem)) {
                 loc = block.getRelative(event.getBlockFace()).getLocation();
 
-            } else if (isBuildClickBlockTop(blockType, heldItem)) {
-                loc = block.getLocation().clone().add(0, 1, 0);
-
             }
-        } else {
-            if (block.getRelative(event.getBlockFace()).getType() == Material.FIRE) {
+        } else if (event.getAction() == Action.LEFT_CLICK_BLOCK) {
+            Block relative = block.getRelative(event.getBlockFace());
+            CMIMaterial clickedMat = CMIMaterial.get(block.getType());
+            CMIMaterial relativeMat = CMIMaterial.get(relative.getType());
+            if (clickedMat == CMIMaterial.FIRE || clickedMat == CMIMaterial.SOUL_FIRE) {
                 loc = block.getLocation();
+            } else if (relativeMat == CMIMaterial.FIRE || relativeMat == CMIMaterial.SOUL_FIRE) {
+                loc = relative.getLocation();
             }
         }
         if (loc == null) {
@@ -1116,6 +1150,170 @@ public class ResidencePlayerListener implements Listener {
         if (FlagPermissions.shouldDenyAndNotify(player, loc, Flags.place, Flags.build)) {
             event.setCancelled(true);
         }
+    }
+
+    private static final org.bukkit.block.BlockFace[] HORIZONTAL_FACES = new org.bukkit.block.BlockFace[] {
+            org.bukkit.block.BlockFace.NORTH,
+            org.bukkit.block.BlockFace.SOUTH,
+            org.bukkit.block.BlockFace.EAST,
+            org.bukkit.block.BlockFace.WEST
+    };
+
+    private static org.bukkit.block.BlockFace getPerpendicularHorizontalFace(org.bukkit.block.BlockFace inward) {
+        return (inward == org.bukkit.block.BlockFace.NORTH || inward == org.bukkit.block.BlockFace.SOUTH)
+                ? org.bukkit.block.BlockFace.EAST
+                : org.bukkit.block.BlockFace.SOUTH;
+    }
+
+    private boolean shouldDenyEndPortalActivation(Player player, Block clickedFrame) {
+        if (FlagPermissions.shouldDenyAndNotify(player, clickedFrame.getLocation(), Flags.place, Flags.build)) {
+            return true;
+        }
+        List<org.bukkit.block.BlockFace> candidateInwards = new ArrayList<>(4);
+        if (clickedFrame.getBlockData() instanceof org.bukkit.block.data.type.EndPortalFrame) {
+            org.bukkit.block.BlockFace facing = ((org.bukkit.block.data.type.EndPortalFrame) clickedFrame.getBlockData()).getFacing();
+            if (facing != null) {
+                candidateInwards.add(facing);
+            }
+        }
+        for (org.bukkit.block.BlockFace face : HORIZONTAL_FACES) {
+            if (!candidateInwards.contains(face)) {
+                org.bukkit.block.BlockFace perp = getPerpendicularHorizontalFace(face);
+                if (clickedFrame.getRelative(perp, 1).getType() == Material.END_PORTAL_FRAME
+                        || clickedFrame.getRelative(perp, -1).getType() == Material.END_PORTAL_FRAME
+                        || clickedFrame.getRelative(face, 1).getRelative(perp, 1).getType() == Material.END_PORTAL_FRAME
+                        || clickedFrame.getRelative(face, 1).getRelative(perp, -1).getType() == Material.END_PORTAL_FRAME) {
+                    candidateInwards.add(face);
+                }
+            }
+        }
+        if (candidateInwards.isEmpty()) {
+            candidateInwards.addAll(Arrays.asList(HORIZONTAL_FACES));
+        }
+
+        for (org.bukkit.block.BlockFace inward : candidateInwards) {
+            org.bukkit.block.BlockFace perp = getPerpendicularHorizontalFace(inward);
+            boolean left1 = clickedFrame.getRelative(perp, -1).getType() == Material.END_PORTAL_FRAME;
+            boolean left2 = clickedFrame.getRelative(perp, -2).getType() == Material.END_PORTAL_FRAME;
+            boolean right1 = clickedFrame.getRelative(perp, 1).getType() == Material.END_PORTAL_FRAME;
+            boolean right2 = clickedFrame.getRelative(perp, 2).getType() == Material.END_PORTAL_FRAME;
+            boolean cornerLeft = clickedFrame.getRelative(inward, 1).getRelative(perp, -1).getType() == Material.END_PORTAL_FRAME;
+            boolean cornerRight = clickedFrame.getRelative(inward, 1).getRelative(perp, 1).getType() == Material.END_PORTAL_FRAME;
+            boolean midCornerLeft = clickedFrame.getRelative(inward, 1).getRelative(perp, -2).getType() == Material.END_PORTAL_FRAME;
+            boolean midCornerRight = clickedFrame.getRelative(inward, 1).getRelative(perp, 2).getType() == Material.END_PORTAL_FRAME;
+
+            List<Integer> startOffsets = new ArrayList<>(3);
+            if (left1 || right1 || midCornerLeft || midCornerRight) {
+                startOffsets.add(-1);
+            }
+            if (right1 || right2 || cornerLeft) {
+                startOffsets.add(0);
+            }
+            if (left1 || left2 || cornerRight) {
+                startOffsets.add(-2);
+            }
+            if (startOffsets.isEmpty()) {
+                startOffsets.add(-1);
+            }
+
+            Set<Block> checkedBlocks = new HashSet<>(15);
+            for (int startOffset : startOffsets) {
+                for (int inwardDist = 1; inwardDist <= 3; inwardDist++) {
+                    Block rowBase = clickedFrame.getRelative(inward, inwardDist);
+                    for (int p = startOffset; p <= startOffset + 2; p++) {
+                        Block interiorBlock = p == 0 ? rowBase : rowBase.getRelative(perp, p);
+                        if (checkedBlocks.add(interiorBlock) && !canMutatePortalOrPodiumBlock(player, interiorBlock)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    private boolean shouldDenyEndCrystalPlacement(Player player, Block clickedBlock, CMIMaterial blockType) {
+        Block above = clickedBlock.getRelative(org.bukkit.block.BlockFace.UP);
+        if (FlagPermissions.shouldDenyAndNotify(player, above.getLocation(), Flags.place, Flags.build)) {
+            return true;
+        }
+        if (blockType == CMIMaterial.BEDROCK && clickedBlock.getWorld().getEnvironment() == Environment.THE_END) {
+            for (int dx = -6; dx <= 6; dx++) {
+                for (int dz = -6; dz <= 6; dz++) {
+                    for (int dy = -1; dy <= 4; dy++) {
+                        Block podiumBlock = clickedBlock.getRelative(dx, dy, dz);
+                        if (!canMutatePortalOrPodiumBlock(player, podiumBlock)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    private boolean canMutatePortalOrPodiumBlock(Player player, Block targetBlock) {
+        if (!ResidenceBlockListener.canPlaceBlock(player, targetBlock, true)) {
+            return false;
+        }
+        if (!ResidenceBlockListener.canBreakBlock(player, targetBlock, true)) {
+            return false;
+        }
+        Material type = targetBlock.getType();
+        if (!type.isAir() && (Utils.isContainer(type) || targetBlock.getState(false) instanceof InventoryHolder)) {
+            if (Flags.container.isGlobalyEnabled()
+                    && FlagPermissions.shouldDenyAndNotify(player, targetBlock, Flags.container, Flags.use)) {
+                return false;
+            }
+            Flags denied = ContainerTransferListener.deniedDirectTransfer(player, targetBlock.getLocation(), ContainerTransferListener.TAKE, true);
+            if (denied != null) {
+                lm.Flag_Deny.sendMessage(player, denied);
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean shouldDenySpawnEggInteract(Player player, Location targetLoc, CMIMaterial eggMat) {
+        if (ResAdmin.isResAdmin(player)) {
+            return false;
+        }
+        boolean isMonsterEgg = isMonsterSpawnEgg(eggMat);
+        Flags eggFlag = isMonsterEgg ? Flags.monster_spawn_egg : Flags.animal_spawn_egg;
+        FlagPermissions perms = FlagPermissions.getPerms(targetLoc, player);
+        boolean canPlace = perms.playerHas(player, Flags.place, perms.playerHas(player, Flags.build, true));
+        if (eggFlag.isGlobalyEnabled()) {
+            if (!perms.playerHas(player, eggFlag, canPlace)) {
+                lm.Flag_Deny.sendMessage(player, perms.has(eggFlag, FlagCombo.OnlyFalse) ? eggFlag : Flags.place);
+                return true;
+            }
+            return false;
+        }
+        if (!canPlace) {
+            lm.Flag_Deny.sendMessage(player, Flags.place);
+            return true;
+        }
+        return false;
+    }
+
+    private static boolean isMonsterSpawnEgg(CMIMaterial eggMat) {
+        if (eggMat == null) {
+            return false;
+        }
+        String name = eggMat.name();
+        if (!name.endsWith("_SPAWN_EGG")) {
+            return false;
+        }
+        String entityName = name.substring(0, name.length() - "_SPAWN_EGG".length());
+        try {
+            org.bukkit.entity.EntityType type = org.bukkit.entity.EntityType.valueOf(entityName);
+            if (type.getEntityClass() != null
+                    && org.bukkit.entity.Enemy.class.isAssignableFrom(type.getEntityClass())) {
+                return true;
+            }
+        } catch (IllegalArgumentException ignored) {
+        }
+        return false;
     }
 
     private void handlePlayerPhysicalInteract(PlayerInteractEvent event, Player player, Block block) {
@@ -1251,6 +1449,22 @@ public class ResidencePlayerListener implements Listener {
         }
         Block block = event.getClickedBlock();
         if (block == null) {
+            if (action == Action.RIGHT_CLICK_AIR && event.useItemInHand() != Result.DENY) {
+                CMIMaterial held = CMIMaterial.get(event.getItem());
+                if (held.containsCriteria(CMIMC.BOAT) || held.containsCriteria(CMIMC.SPAWNEGG)) {
+                    Block fluidTarget = player.getTargetBlockExact(5, org.bukkit.FluidCollisionMode.ALWAYS);
+                    if (fluidTarget != null) {
+                        if (held.containsCriteria(CMIMC.BOAT)) {
+                            if (FlagPermissions.shouldDenyAndNotify(player, fluidTarget.getLocation(), Flags.vehicleplacing, Flags.build)
+                                    || FlagPermissions.shouldDenyAndNotify(player, fluidTarget.getRelative(org.bukkit.block.BlockFace.UP).getLocation(), Flags.vehicleplacing, Flags.build)) {
+                                event.setCancelled(true);
+                            }
+                        } else if (shouldDenySpawnEggInteract(player, fluidTarget.getLocation(), held)) {
+                            event.setCancelled(true);
+                        }
+                    }
+                }
+            }
             return;
         }
         if (isPhysical) {
@@ -1287,11 +1501,11 @@ public class ResidencePlayerListener implements Listener {
         if (ResAdmin.isResAdmin(player)) {
             return;
         }
-        if (event.getAction() == Action.RIGHT_CLICK_BLOCK && Flags.explode.isGlobalyEnabled()
+        if (event.getAction() == Action.RIGHT_CLICK_BLOCK
+                && (Flags.explode.isGlobalyEnabled() || Flags.destroy.isGlobalyEnabled() || Flags.build.isGlobalyEnabled())
                 && willExplodeOnUse(event, block)) {
-            FlagPermissions permissions = FlagPermissions.getPerms(block.getLocation());
-            if (!permissions.has(Flags.explode, permissions.has(Flags.destroy, true))) {
-                lm.Flag_Deny.sendMessage(player, Flags.explode);
+            if (isExplosionDeniedForBlock(block)) {
+                lm.Flag_Deny.sendMessage(player, Flags.explode.isGlobalyEnabled() ? Flags.explode : (Flags.destroy.isGlobalyEnabled() ? Flags.destroy : Flags.build));
                 event.setCancelled(true);
                 return;
             }
@@ -1330,11 +1544,32 @@ public class ResidencePlayerListener implements Listener {
         if (flag == null || !flag.isGlobalyEnabled()) {
             return;
         }
+        if (flag == Flags.container && CMIMaterial.get(mat).containsCriteria(CMIMC.SHELF)) {
+            for (Block shelfBlock : ContainerTransferListener.getConnectedShelfChain(block)) {
+                FlagPermissions shelfPerms = FlagPermissions.getPerms(shelfBlock.getLocation(), player);
+                boolean shelfUse = shelfPerms.playerHas(player, Flags.use, true);
+                if (!shelfPerms.playerHas(player, Flags.container, shelfUse)
+                        && !ResPerm.bypass_container.hasPermission(player, 10000L)) {
+                    if (event.getAction() == Action.RIGHT_CLICK_BLOCK || canBothClickBlock(mat)) {
+                        lm.Flag_Deny.sendMessage(player, Flags.container);
+                        event.setCancelled(true);
+                    }
+                    return;
+                }
+            }
+        }
         // Start AbstractBlockClickFlag Check
         FlagPermissions perms = FlagPermissions.getPerms(block.getLocation(), player);
         boolean hasUse = (flag == Flags.use) || perms.playerHas(player, Flags.use, true);
 
         if (perms.playerHas(player, flag, hasUse)) {
+            if ((flag == Flags.container || mat == Material.LECTERN) && event.getAction() == Action.RIGHT_CLICK_BLOCK) {
+                Flags deniedDirectional = ContainerTransferListener.deniedNonGuiBlockTransfer(event, player, block);
+                if (deniedDirectional != null) {
+                    lm.Flag_Deny.sendMessage(player, deniedDirectional);
+                    event.setCancelled(true);
+                }
+            }
             return;
         }
         switch (flag) {
@@ -1361,22 +1596,61 @@ public class ResidencePlayerListener implements Listener {
         // End AbstractBlockClickFlag Check
     }
 
+    private static boolean isExplosionDeniedAtLocation(Location loc) {
+        FlagPermissions perms = FlagPermissions.getPerms(loc);
+        boolean fallbackBuild = !Flags.build.isGlobalyEnabled() || perms.has(Flags.build, true);
+        boolean allowDestroy = Flags.destroy.isGlobalyEnabled() ? perms.has(Flags.destroy, fallbackBuild) : fallbackBuild;
+        boolean allowExplode = Flags.explode.isGlobalyEnabled() ? perms.has(Flags.explode, allowDestroy) : allowDestroy;
+        return !allowExplode;
+    }
+
+    private boolean isExplosionDeniedForBlock(Block block) {
+        if (isExplosionDeniedAtLocation(block.getLocation())) {
+            return true;
+        }
+        if (CMIMaterial.get(block.getType()).containsCriteria(CMIMC.BED) && Version.isCurrentEqualOrHigher(Version.v1_13_0)) {
+            if (block.getBlockData() instanceof org.bukkit.block.data.type.Bed) {
+                org.bukkit.block.data.type.Bed bed = (org.bukkit.block.data.type.Bed) block.getBlockData();
+                Block otherHalf = block.getRelative(bed.getPart() == org.bukkit.block.data.type.Bed.Part.FOOT
+                        ? bed.getFacing()
+                        : bed.getFacing().getOppositeFace());
+                if (isExplosionDeniedAtLocation(otherHalf.getLocation())) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static boolean hasHeldItem(ItemStack item) {
+        return item != null && item.getType() != Material.AIR && item.getAmount() > 0;
+    }
+
+    private static boolean isSneakingWithItem(Player player) {
+        if (!player.isSneaking())
+            return false;
+        if (hasHeldItem(player.getInventory().getItemInMainHand()))
+            return true;
+        return Version.isCurrentEqualOrHigher(Version.v1_9_0) && hasHeldItem(player.getInventory().getItemInOffHand());
+    }
+
     private boolean willExplodeOnUse(PlayerInteractEvent event, Block block) {
-        if (event.getPlayer().isSneaking() && event.hasItem())
+        Player player = event.getPlayer();
+        if (isSneakingWithItem(player))
             return false;
         CMIMaterial material = CMIMaterial.get(block.getType());
         World world = block.getWorld();
         if (material.containsCriteria(CMIMC.BED)) {
-            try {
-                return !world.isBedWorks();
-            } catch (NoSuchMethodError legacyServer) {
-                return world.getEnvironment() != Environment.NORMAL;
-            }
+            return !world.isBedWorks();
         }
         if (material != CMIMaterial.RESPAWN_ANCHOR || !Version.isCurrentEqualOrHigher(Version.v1_16_0))
             return false;
         org.bukkit.block.data.type.RespawnAnchor anchor = (org.bukkit.block.data.type.RespawnAnchor) block.getBlockData();
-        if (anchor.getCharges() == 0 || (CMIMaterial.get(event.getItem()) == CMIMaterial.GLOWSTONE && anchor.getCharges() < anchor.getMaximumCharges()))
+        boolean chargingWithGlowstone = anchor.getCharges() < anchor.getMaximumCharges()
+                && (CMIMaterial.get(event.getItem()) == CMIMaterial.GLOWSTONE
+                        || (event.getHand() == EquipmentSlot.HAND
+                                && CMIMaterial.get(player.getInventory().getItemInOffHand()) == CMIMaterial.GLOWSTONE));
+        if (anchor.getCharges() == 0 || chargingWithGlowstone)
             return false;
         return !world.isRespawnAnchorWorks();
     }
@@ -1446,6 +1720,12 @@ public class ResidencePlayerListener implements Listener {
                 return;
             }
         }
+        if (held != null && held.containsCriteria(CMIMC.SPAWNEGG)) {
+            if (shouldDenySpawnEggInteract(player, entity.getLocation(), held)) {
+                event.setCancelled(true);
+                return;
+            }
+        }
         if (Flags.nametag.isGlobalyEnabled() && entity instanceof LivingEntity && held == CMIMaterial.NAME_TAG) {
             mainFlag = Flags.nametag;
             if (Utils.isAnimal(entity)) {
@@ -1454,9 +1734,21 @@ public class ResidencePlayerListener implements Listener {
                 subFlag = Flags.mobkilling;
             }
 
-        } else if (Flags.dye.isGlobalyEnabled() && entity instanceof Sheep && held != null && held.containsCriteria(CMIMC.DYE)) {
+        } else if (Flags.dye.isGlobalyEnabled()
+                && (entity instanceof Sheep || entity instanceof org.bukkit.entity.Wolf || entity instanceof org.bukkit.entity.Cat)
+                && held != null && held.containsCriteria(CMIMC.DYE)) {
             mainFlag = Flags.dye;
             subFlag = Flags.animalkilling;
+
+        } else if (Flags.brush.isGlobalyEnabled() && held == CMIMaterial.BRUSH
+                && net.Zrips.CMILib.Entities.CMIEntityType.get(entity) == net.Zrips.CMILib.Entities.CMIEntityType.ARMADILLO) {
+            mainFlag = Flags.brush;
+            subFlag = Flags.animalkilling;
+
+        } else if (Flags.animalkilling.isGlobalyEnabled()
+                && (((entity instanceof org.bukkit.entity.Cow || entity instanceof org.bukkit.entity.Goat) && held == CMIMaterial.BUCKET)
+                        || (entity instanceof org.bukkit.entity.MushroomCow && held == CMIMaterial.BOWL))) {
+            mainFlag = Flags.animalkilling;
 
         } else if (Flags.commandblock.isGlobalyEnabled() && entity instanceof CommandMinecart) {
             mainFlag = Flags.commandblock;
@@ -1477,7 +1769,44 @@ public class ResidencePlayerListener implements Listener {
         }
         if (FlagPermissions.shouldDenyAndNotify(player, entity, mainFlag, subFlag)) {
             event.setCancelled(true);
+            return;
         }
+        if (mainFlag == Flags.container) {
+            int transfer = detectContainerEntityTransfer(entity, item);
+            if (transfer != 0) {
+                Flags denied = ContainerTransferListener.deniedDirectTransfer(player, entity.getLocation(), transfer, false);
+                if (denied != null) {
+                    lm.Flag_Deny.sendMessage(player, denied);
+                    event.setCancelled(true);
+                }
+            }
+        }
+    }
+
+    private static int detectContainerEntityTransfer(Entity entity, ItemStack held) {
+        boolean hasHeld = hasHeldItem(held);
+        if (entity instanceof org.bukkit.entity.ItemFrame) {
+            ItemStack current = ((org.bukkit.entity.ItemFrame) entity).getItem();
+            boolean frameEmpty = current == null || current.getType() == Material.AIR || current.getAmount() <= 0;
+            return (frameEmpty && hasHeld) ? ContainerTransferListener.PUT : 0;
+        }
+        if (entity instanceof org.bukkit.entity.minecart.PoweredMinecart) {
+            if (!hasHeld)
+                return 0;
+            CMIMaterial mat = CMIMaterial.get(held.getType());
+            return (mat == CMIMaterial.COAL || mat == CMIMaterial.CHARCOAL) ? ContainerTransferListener.PUT : 0;
+        }
+        if (Version.isCurrentEqualOrHigher(Version.v1_19_0) && entity instanceof org.bukkit.entity.Allay) {
+            org.bukkit.inventory.EntityEquipment eq = ((org.bukkit.entity.Allay) entity).getEquipment();
+            ItemStack allayHeld = eq == null ? null : eq.getItemInMainHand();
+            boolean allayHasItem = hasHeldItem(allayHeld);
+            if (!allayHasItem && hasHeld)
+                return ContainerTransferListener.PUT;
+            if (allayHasItem && !hasHeld)
+                return ContainerTransferListener.TAKE;
+            return 0;
+        }
+        return 0;
     }
 
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
@@ -1510,20 +1839,47 @@ public class ResidencePlayerListener implements Listener {
     public void onEntityTryRideVehicle(VehicleEnterEvent event) {
 
         Entity entity = event.getEntered();
+        Vehicle vehicle = event.getVehicle();
 
         if (entity instanceof Player) {
             if (FlagPermissions.shouldIgnoreCheck(Flags.riding, entity)) {
                 return;
             }
-            if (FlagPermissions.shouldDenyAndNotify((Player) entity, event.getVehicle(), Flags.riding, null)) {
+            if (FlagPermissions.shouldDenyAndNotify((Player) entity, vehicle, Flags.riding, null)) {
                 event.setCancelled(true);
             }
         } else {
             if (FlagPermissions.shouldIgnoreCheck(Flags.boarding, entity)) {
                 return;
             }
-            if (FlagPermissions.has(entity.getLocation(), Flags.boarding, FlagCombo.OnlyFalse)) {
-                event.setCancelled(true);
+            Player operator = null;
+            if (vehicle instanceof io.papermc.paper.entity.Leashable && ((io.papermc.paper.entity.Leashable) vehicle).isLeashed()) {
+                try {
+                    Entity holder = ((io.papermc.paper.entity.Leashable) vehicle).getLeashHolder();
+                    if (holder instanceof Player) {
+                        operator = (Player) holder;
+                    }
+                } catch (IllegalStateException ignored) {
+                }
+            }
+            if (operator == null) {
+                for (Entity passenger : Utils.getPassengers(vehicle)) {
+                    if (passenger instanceof Player) {
+                        operator = (Player) passenger;
+                        break;
+                    }
+                }
+            }
+            if (operator != null) {
+                if (FlagPermissions.shouldDenyAndNotify(operator, entity.getLocation(), Flags.boarding, null)
+                        || FlagPermissions.shouldDenyAndNotify(operator, vehicle.getLocation(), Flags.boarding, null)) {
+                    event.setCancelled(true);
+                }
+            } else {
+                if (FlagPermissions.has(entity.getLocation(), Flags.boarding, FlagCombo.OnlyFalse)
+                        || FlagPermissions.has(vehicle.getLocation(), Flags.boarding, FlagCombo.OnlyFalse)) {
+                    event.setCancelled(true);
+                }
             }
         }
     }
@@ -1541,7 +1897,7 @@ public class ResidencePlayerListener implements Listener {
         if (!(holder instanceof Vehicle)) {
             return;
         }
-        if (FlagPermissions.shouldDenyAndNotify(player, (Vehicle) holder, Flags.container, null)) {
+        if (FlagPermissions.shouldDenyAndNotify(player, (Vehicle) holder, Flags.container, Flags.use)) {
             event.setCancelled(true);
         }
     }
@@ -1593,12 +1949,7 @@ public class ResidencePlayerListener implements Listener {
                 canPlaceInside = clickBlock.getBlockData() instanceof org.bukkit.block.data.Waterlogged;
             }
         }
-        Location loc;
-        try {
-            loc = event.getBlock().getLocation();
-        } catch (NoSuchMethodError legacyServer) {
-            loc = canPlaceInside ? clickBlock.getLocation() : clickBlock.getRelative(event.getBlockFace()).getLocation();
-        }
+        Location loc = event.getBlock().getLocation();
 
         ClaimedResidence res = plugin.getResidenceManager().getByLoc(loc);
         if (res != null) {
@@ -1703,21 +2054,31 @@ public class ResidencePlayerListener implements Listener {
         if (resTo == null)
             return true;
 
-        boolean consumableTeleport = Utils.isChorusTeleport(event.getCause());
-        if (event.getCause() == TeleportCause.COMMAND || event.getCause() == TeleportCause.NETHER_PORTAL
-                || event.getCause() == TeleportCause.PLUGIN || consumableTeleport) {
-            if (resTo.getPermissions().playerHas(player, Flags.move, FlagCombo.OnlyFalse) && !resTo.isOwner(player)
-                    && !ResPerm.bypass_tp.hasPermission(player, 10000L) && !ResPerm.admin_move.hasPermission(player, 10000L)) {
+        TeleportCause cause = event.getCause();
+        boolean consumableTeleport = Utils.isChorusTeleport(cause);
+        if (cause == TeleportCause.COMMAND
+                || cause == TeleportCause.NETHER_PORTAL
+                || cause == TeleportCause.END_PORTAL
+                || cause == TeleportCause.END_GATEWAY
+                || cause == TeleportCause.DISMOUNT
+                || cause == TeleportCause.EXIT_BED
+                || cause == TeleportCause.PLUGIN
+                || consumableTeleport) {
+            if (Flags.move.isGlobalyEnabled()
+                    && resTo.getPermissions().playerHas(player, Flags.move, FlagCombo.OnlyFalse)
+                    && !resTo.isOwner(player)
+                    && !ResPerm.bypass_tp.hasPermission(player, 10000L)
+                    && !ResPerm.admin_move.hasPermission(player, 10000L)) {
                 lm.Residence_MoveDeny.sendMessage(player, resTo.getName());
                 return false;
             }
-        } else if (event.getCause() == TeleportCause.ENDER_PEARL
-                && (resTo.getPermissions().playerHas(player, Flags.enderpearl, FlagCombo.OnlyFalse) || resTo.getPermissions().playerHas(player, Flags.move,
-                        FlagCombo.OnlyFalse))) {
+        } else if (cause == TeleportCause.ENDER_PEARL
+                && ((Flags.enderpearl.isGlobalyEnabled() && resTo.getPermissions().playerHas(player, Flags.enderpearl, FlagCombo.OnlyFalse))
+                        || (Flags.move.isGlobalyEnabled() && resTo.getPermissions().playerHas(player, Flags.move, FlagCombo.OnlyFalse)))) {
             lm.Residence_FlagDeny.sendMessage(player, Flags.enderpearl, resTo.getName());
             return false;
         }
-        if ((event.getCause() == TeleportCause.PLUGIN || event.getCause() == TeleportCause.COMMAND) && plugin.getConfigManager().isBlockAnyTeleportation() && !resTo.isOwner(player)
+        if ((cause == TeleportCause.PLUGIN || cause == TeleportCause.COMMAND) && plugin.getConfigManager().isBlockAnyTeleportation() && !resTo.isOwner(player)
                 && resTo.getPermissions().playerHas(player, Flags.tp, FlagCombo.OnlyFalse) && !ResPerm.admin_tp.hasPermission(player)) {
             lm.General_TeleportDeny.sendMessage(player, resTo.getName());
             return false;
@@ -1759,12 +2120,12 @@ public class ResidencePlayerListener implements Listener {
         }
 
         if (res.getPermissions().has(Flags.respawn, false) && Version.isSpigot())
-            CMIScheduler.runTaskLater(plugin, () -> {
+            player.getScheduler().runDelayed(plugin, task -> {
                 try {
-                    event.getEntity().spigot().respawn();
+                    player.spigot().respawn();
                 } catch (Throwable e) {
                 }
-            }, 20L);
+            }, null, 20L);
     }
 
     public static Location getSafeLocation(Location loc) {
@@ -1838,18 +2199,18 @@ public class ResidencePlayerListener implements Listener {
             player.setAllowFlight(false);
 
             if (land) {
-                CMIScheduler.runAtLocation(plugin, player.getLocation(), () -> {
+                player.getScheduler().run(plugin, task -> {
                     Location loc = getFlyTeleportLocation(player, oldRes);
                     player.closeInventory();
                     Teleporting.teleport(player, loc);
-                });
+                }, null);
             }
             player.setFlying(false);
             player.setAllowFlight(false);
         } else {
 
             player.setAllowFlight(true);
-            CMIScheduler.runAtEntityLater(plugin, player, () -> {
+            player.getScheduler().runDelayed(plugin, task -> {
                 ClaimedResidence res = plugin.getResidenceManager().getByLoc(player.getLocation());
 
                 if (res == null || !res.getPermissions().playerHas(player, Flags.fly, FlagCombo.OnlyTrue) && player.isOnline()) {
@@ -1862,7 +2223,7 @@ public class ResidencePlayerListener implements Listener {
                     // Secondary set of flight mode in case another plugin overrides previous set
                     player.setAllowFlight(true);
                 }
-            }, 20L);
+            }, null, 20L);
         }
     }
 
@@ -1876,9 +2237,9 @@ public class ResidencePlayerListener implements Listener {
         if (player == null)
             return;
 
-        CMIScheduler.runAtLocation(plugin, player.getLocation(), () -> {
+        player.getScheduler().run(plugin, task -> {
             checkSpecialFlags(player, newRes, oldRes);
-        });
+        }, null);
     }
 
     private void checkSpecialFlags(Player player, ClaimedResidence newRes, ClaimedResidence oldRes) {
@@ -2144,7 +2505,7 @@ public class ResidencePlayerListener implements Listener {
             ClaimedResidence current = plugin.getResidenceManager().getByLoc(lastLoc);
             if (current != null && Flags.tp.isGlobalyEnabled() && current.getPermissions().playerHas(player, Flags.tp, FlagCombo.OnlyFalse) && !ResPerm.admin_tp.hasPermission(player, 10000L)) {
                 // Should have a 1 tick delay to avoid player teleportation on move event
-                CMIScheduler.runTask(plugin, () -> current.kickFromResidence(player));
+                player.getScheduler().run(plugin, task -> current.kickFromResidence(player), null);
                 teleported = true;
             }
 
@@ -2274,7 +2635,7 @@ public class ResidencePlayerListener implements Listener {
             }
 
             String name = res.getName();
-            CMIScheduler.runTaskAsynchronously(plugin, () -> lm.Residence_MoveDeny.sendMessage(player, name));
+            Bukkit.getAsyncScheduler().runNow(plugin, task -> lm.Residence_MoveDeny.sendMessage(player, name));
 
             return false;
         }

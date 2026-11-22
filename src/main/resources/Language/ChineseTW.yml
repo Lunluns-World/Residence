@@ -412,6 +412,176 @@ Language:
     - '&2點擊左鍵以啟用'
     - '&c點擊右鍵以停用'
     - '&eShift 鍵 + 點擊左鍵以變更為未設定'
+    Disabled: '&c領地 GUI 功能已在 config.yml 中停用。'
+    Browser:
+      Title: '&2領地清單 - %1%2 &8(%3/%4)'
+      TitlePlayer: '&2領地清單 - %1 的領地 &8(%2/%3)'
+    Filter:
+      All: 全服公開
+      Mine: 我的領地
+      Pinned: 已收藏
+    Sort:
+      Default: 預設排序
+      Likes: 最多按讚
+      Name: 名稱排序
+      Newest: 最新建立
+    Server:
+      All: 所有伺服器
+      Current: ' &a(目前分流)'
+      Remote: ' &e(跨服)'
+    Entry:
+      Id: '&8領地代號：&7%1'
+      Owner: '&7擁有者：&f%1'
+      Server: '&7伺服器：&b%1%2'
+      World: '&7世界：&f%1 &8(%2, %3, %4)'
+      Likes: '%1&e按讚數：&f%2'
+      Status: '&7顯示狀態：%1'
+      StatusPublic: '&a公開'
+      StatusHidden: '&c隱藏'
+      Teleport: '&7傳送權限：%1'
+      TeleportAvailable: '&a可傳送'
+      TeleportRestricted: '&c受限制'
+      ClickTeleport: '&e左鍵點擊：&f傳送到領地'
+      ClickPin: '&eShift+左鍵：&f置頂／收藏'
+      ClickUnpin: '&eShift+左鍵：&f取消收藏'
+      ClickManage: '&e右鍵點擊：&6管理此領地'
+      ClickLike: '&e右鍵點擊：&f按讚'
+      ClickUnlike: '&e右鍵點擊：&f取消按讚'
+      ClickShiftLike: '&eShift+右鍵：&f按讚'
+      ClickShiftUnlike: '&eShift+右鍵：&f取消按讚'
+    Button:
+      Filter:
+        Name: '&e篩選模式：&6%1'
+        Lore:
+        - '&7點擊切換顯示篩選'
+        - '&8(全服公開 / 我的領地 / 已收藏)'
+      Server:
+        Name: '&b伺服器篩選：&f%1'
+        Lore1: '&7點擊切換伺服器篩選'
+        Lore2: '&8可用伺服器：&7%1'
+      Sort:
+        Name: '&e排序方式：&6%1'
+        Lore:
+        - '&7點擊切換排序方式'
+        - '&8(預設排序 / 最多按讚 / 名稱排序 / 最新建立)'
+      Refresh:
+        Name: '&a重新整理清單'
+        Lore: '&7點擊重新載入領地清單'
+      Back:
+        Name: '&7返回領地清單'
+      BackManage:
+        Name: '&7返回領地管理'
+    Manage:
+      Title: '&2領地管理：&f%1'
+      VisibilityPublic: '&a公開顯示：&2公開'
+      VisibilityHidden: '&c公開顯示：&7隱藏'
+      VisibilityLore:
+      - '&7切換此領地是否顯示於'
+      - '&7全服公開領地瀏覽介面。'
+      IconName: '&e領地圖示：&f%1'
+      IconLore:
+      - '&e左鍵點擊：&7使用主手拿著的物品作為圖示'
+      - '&e右鍵點擊：&7重設為預設圖示'
+      AliasName: '&e顯示別名'
+      DescName: '&e領地簡介'
+      Current: '&7目前設定：&f%1'
+      None: '&8(未設定)'
+      AliasLore:
+      - '&e左鍵點擊：&7在聊天欄輸入新別名'
+      - '&e右鍵點擊：&7清除目前別名'
+      DescLore:
+      - '&e左鍵點擊：&7在聊天欄輸入新簡介'
+      - '&e右鍵點擊：&7清除目前簡介'
+      SetTpName: '&b設定領地傳送點'
+      SetTpLore:
+      - '&7將領地傳送點設定為'
+      - '&7你目前站立的位置。'
+      FlagsName: '&6領地旗標設定'
+      FlagsLore:
+      - '&7開啟此領地的旗標權限設定介面。'
+      TeleportName: '&a立即傳送'
+      TeleportLore: '&7點擊立即傳送至 &e%1'
+      InfoName: '&b領地詳細資訊'
+      InfoAreas: '&7區塊數：&f%1 &8(&7總方塊數：&f%2&8)'
+      InfoSubzones: '&7子領地數量：&f%1'
+      InfoMembers: '&7已設定權限成員數：&f%1'
+      InfoCreated: '&7建立時間：&f%1'
+      InfoClick: '&e點擊：&7於聊天欄顯示完整領地資訊'
+      MembersName: '&d成員與個人旗標管理'
+      MembersLore:
+      - '&7檢視並管理領地成員的個人權限'
+      - '&7（等同於 /res pset 介面）。'
+      SubzonesName: '&3子領地清單'
+      SubzonesLore:
+      - '&7查看、傳送或管理此領地內的'
+      - '&7所有子領地。'
+      DeleteName: '&c刪除領地'
+      DeleteLore:
+      - '&7永久刪除此領地。'
+      - '&c點擊後會先開啟二次確認介面。'
+    Subzones:
+      Title: '&3子領地清單：&f%1 &8(%2/%3)'
+      EmptyName: '&7目前沒有子領地'
+      EmptyLore:
+      - '&7此領地目前尚未建立任何子領地。'
+      - '&8可使用 /res subzone <名稱> 建立子領地。'
+      Size: '&7大小：&f%1 &7格方塊'
+      Nested: '&7下層子領地：&f%1'
+      ClickTp: '&e左鍵點擊：&f傳送到子領地'
+      ClickFlags: '&e右鍵點擊：&6編輯子領地旗標'
+      ClickMembers: '&eShift+左鍵：&d管理成員權限'
+      ClickNested: '&e中鍵點擊：&3檢視下層子領地'
+      ClickDelete: '&eShift+右鍵：&c刪除子領地'
+    Members:
+      Title: '&d成員權限：&f%1 &8(%2/%3)'
+      OnlineTitle: '&d選擇線上玩家：&f%1 &8(%2/%3)'
+      EmptyName: '&7尚未設定任何成員權限'
+      EmptyLore:
+      - '&7請使用下方按鈕新增玩家，'
+      - '&7並設定他的個人領地權限。'
+      FlagsLabel: '&7目前旗標：%1'
+      ClickEdit: '&e左鍵點擊：&6開啟個人旗標介面'
+      ClickRemoveAll: '&eShift+右鍵：&c清除該玩家所有旗標'
+      AddChatName: '&a新增成員（輸入名稱）'
+      AddChatLore:
+      - '&7點擊後於聊天欄輸入玩家名稱，'
+      - '&7即可開啟該玩家的個人權限介面。'
+      OnlineBtnName: '&b從線上玩家選擇'
+      OnlineBtnLore:
+      - '&7從目前線上玩家清單直接點擊，'
+      - '&7快速設定他的個人權限。'
+      ShowMembersName: '&d返回已設定成員清單'
+      OnlineClick: '&e點擊：&6設定此玩家個人旗標'
+      NoOnline: '&7目前沒有其他線上玩家'
+      Removed: '&a已清除 &e%1 &a在領地 &e%2 &a的所有個人旗標。'
+    Delete:
+      Title: '&4確認刪除領地：&c%1'
+      ConfirmName: '&c&l確認刪除'
+      ConfirmLore1: '&7點擊後將永久刪除領地 &e%1&7。'
+      ConfirmLore2: '&c此操作無法復原！'
+      SubzoneWarning: '&c警告：包含的 &e%1 &c個子領地也會一併刪除！'
+      CancelName: '&a&l取消返回'
+      CancelLore:
+      - '&7保留此領地並返回管理介面。'
+    Msg:
+      Pinned: '&a已收藏／置頂領地 &e%1'
+      Unpinned: '&7已取消收藏領地 &e%1'
+      Liked: '&a已對領地 &e%1 &a按讚'
+      Unliked: '&7已取消對領地 &e%1 &7的按讚'
+      IconReset: '&a已將領地圖示重設為預設值。'
+      IconHoldItem: '&c請先在主手拿著要設為圖示的物品。'
+      IconUpdated: '&a已將領地 &e%1 &a的圖示更新為 &f%2'
+      UnknownMaterial: '&c找不到物品材質：&f%1'
+      AliasPrompt: '&a請在聊天欄輸入領地 &e%1 &a的新顯示別名（&7支援 & 顏色碼，輸入 &ccancel &7取消或 &eclear &7清除&a）：'
+      DescPrompt: '&a請在聊天欄輸入領地 &e%1 &a的新簡介（&7輸入 &ccancel &7取消或 &eclear &7清除&a）：'
+      AddMemberPrompt: '&a請在聊天欄輸入要在領地 &e%1 &a設定權限的玩家名稱（&7輸入 &ccancel &7取消&a）：'
+      EditCancelled: '&e已取消輸入。'
+      AliasCleared: '&a已清除領地 &e%1 &a的顯示別名。'
+      AliasUpdated: '&a已將領地 &e%1 &a的顯示別名更新為：&f%2'
+      DescCleared: '&a已清除領地 &e%1 &a的簡介。'
+      DescUpdated: '&a已將領地 &e%1 &a的簡介更新為：&f%2'
+      VisibilityUpdated: '&a領地 &e%1 &a在 GUI 中的狀態已切換為 %2&a。'
+      RemoteInfo: '&6[%1] &e%2 &7| 擁有者：&f%3 &7| 世界：&f%4 &8(%5, %6, %7)'
   InformationPage:
     Top: '&e___/ &a %1 - %2 &e \___'
     TopSingle: '&e___/ &a %1 &e \___'
@@ -1435,17 +1605,31 @@ CommandHelp:
           - '&e用法：&6/res limits （玩家名稱）'
           - 顯示你在建立與管理領地方面的各種限制。
           Description: 顯示你的領地限制。
+        gui:
+          Info:
+          - '&e用法：&6/res gui [all|mine|pinned|manage|alias|desc|icon|toggle]'
+          - 開啟領地清單與管理 GUI，支援跨服領地瀏覽、收藏、按讚與點擊傳送。
+          Description: 開啟領地瀏覽與管理介面
+        migrate:
+          Info:
+          - '&e用法：&6/resadmin migrate yaml2db apply'
+          - '&e用法：&6/resadmin migrate db2yaml'
+          - '&e用法：&6/resadmin migrate griefprevention [preview/apply] [ClaimData路徑]'
+          - '&e用法：&6/resadmin migrate lands [preview/apply] [LandsData路徑]'
+          - '&7（僅限主控台執行）'
+          Description: 轉換 YAML/資料庫儲存或匯入 GriefPrevention／Lands 領地資料
         list:
           Info:
-          - '&e用法：&6/res list <玩家名稱> <頁數> <世界名稱>'
+          - '&e用法：&6/res list [text|gui] <玩家名稱> <頁數> <世界名稱>'
+          - 開啟領地清單 GUI（或使用 text 參數以聊天文字方式列出）。
           - 列出指定玩家擁有的所有領地（除了隱藏領地）。
           - 如果顯示自己的領地，隱藏領地也會被顯示。
           - 如果要列出所有玩家的領地，請使用指令 /res listall。
           Description: 列出領地
         listall:
           Info:
-          - '&e用法：&6/res listall <頁數> <世界名稱> <-a/-f>'
-          - 列出所有的領地
+          - '&e用法：&6/res listall [text|gui] <頁數> <世界名稱> <-a/-f>'
+          - 開啟全服公開領地 GUI（或使用 text 參數以聊天文字方式列出）。
           Description: 列出所有的領地
         listallhidden:
           Info:

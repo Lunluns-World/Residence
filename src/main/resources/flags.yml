@@ -609,6 +609,7 @@ Global:
   # These are default flags applied to all residences from any user group.
   ResidenceDefault:
     animalkilling: false
+    boarding: false
     build: false
     container: false
     creeper: false
@@ -619,6 +620,7 @@ Global:
     hook: false
     ignite: false
     leash: false
+    minecartsuction: false
     riding: false
     pistonprotection: true
     pvp: false
@@ -631,8 +633,11 @@ Global:
   # These are default flags applied to the residence creator of any group.
   CreatorDefault:
     animalkilling: true
+    boarding: true
     build: true
     container: true
+    container-put: true
+    container-take: true
     destroy: true
     harvest: true
     hook: true
@@ -650,8 +655,11 @@ Global:
   RentedDefault:
     admin: true
     animalkilling: true
+    boarding: true
     build: true
     container: true
+    container-put: true
+    container-take: true
     destroy: true
     harvest: true
     hook: true
@@ -692,6 +700,8 @@ Global:
     - build
     - chat
     - container
+    - container-put
+    - container-take
     - destroy
     - harvest
     - hook

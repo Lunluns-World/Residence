@@ -3,6 +3,7 @@ package com.bekvon.bukkit.residence.listeners;
 import org.bukkit.entity.ArmorStand;
 import org.bukkit.entity.Boat;
 import org.bukkit.entity.Entity;
+import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Minecart;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -14,6 +15,7 @@ import org.bukkit.inventory.EquipmentSlot;
 import com.bekvon.bukkit.residence.Residence;
 import com.bekvon.bukkit.residence.containers.Flags;
 import com.bekvon.bukkit.residence.containers.lm;
+import com.bekvon.bukkit.residence.protection.ClaimedResidence;
 import com.bekvon.bukkit.residence.protection.FlagPermissions;
 import com.bekvon.bukkit.residence.protection.FlagPermissions.FlagCombo;
 import com.bekvon.bukkit.residence.utils.Utils;
@@ -60,15 +62,23 @@ public class ResidenceListener1_21_8_Paper implements Listener {
                 lm.Flag_Deny.sendMessage(attackerPlayer, Flags.pvp);
                 return true;
             }
+            ClaimedResidence attackerRes = ClaimedResidence.getByLoc(attackerPlayer.getLocation());
+            ClaimedResidence victimRes = ClaimedResidence.getByLoc(victim.getLocation());
+            if (Residence.getInstance().getWorldFlags().getPerms(attackerPlayer.getWorld()).has(Flags.pvp, FlagCombo.OnlyFalse)
+                    && (attackerRes == null || !attackerRes.getPermissions().has(Flags.pvp, FlagCombo.OnlyTrue)
+                            || victimRes == null || !victimRes.getPermissions().has(Flags.pvp, FlagCombo.OnlyTrue))) {
+                lm.General_WorldPVPDisabled.sendMessage(attackerPlayer);
+                return true;
+            }
             return false;
         }
         if (Utils.isAnimal(victim)) {
             // SulfurCube containing blocks doesn't take damage
             // preferentially uses Flags.push instead on Paper 26.2+
             if (Version.isCurrentEqualOrHigher(Version.v26_2_0) && Version.isPaperBranch()
-                    && victim instanceof org.bukkit.entity.SulfurCube) {
+                    && victim instanceof org.bukkit.entity.SulfurCube && victim instanceof LivingEntity) {
 
-                EntityEquipment equipment = ((org.bukkit.entity.SulfurCube) victim).getEquipment();
+                EntityEquipment equipment = ((LivingEntity) victim).getEquipment();
                 // Check if SulfurCube has a block inside
                 if (equipment != null && !equipment.getItem(EquipmentSlot.BODY).isEmpty()) {
                     return shouldDeny(victim, attackerPlayer, Flags.push, Flags.animalkilling);

@@ -123,6 +123,13 @@ public class Utils {
     }
 
     public static @Nullable Player getPlayerSource(Entity entity) {
+        return getPlayerSource(entity, 0);
+    }
+
+    private static @Nullable Player getPlayerSource(Entity entity, int depth) {
+        if (entity == null || depth > 5) {
+            return null;
+        }
         if (entity instanceof Player) {
             return (Player) entity;
         }
@@ -130,6 +137,36 @@ public class Utils {
             ProjectileSource shooter = ((Projectile) entity).getShooter();
             if (shooter instanceof Player) {
                 return (Player) shooter;
+            }
+            if (shooter instanceof Entity) {
+                return getPlayerSource((Entity) shooter, depth + 1);
+            }
+        }
+        if (entity instanceof org.bukkit.entity.TNTPrimed) {
+            Entity source = ((org.bukkit.entity.TNTPrimed) entity).getSource();
+            if (source != null) {
+                return getPlayerSource(source, depth + 1);
+            }
+        }
+        if (entity instanceof Tameable) {
+            Tameable tameable = (Tameable) entity;
+            if (tameable.isTamed() && tameable.getOwner() instanceof Player) {
+                return (Player) tameable.getOwner();
+            }
+        }
+        if (entity instanceof org.bukkit.entity.LightningStrike) {
+            Player causing = ((org.bukkit.entity.LightningStrike) entity).getCausingPlayer();
+            if (causing != null) {
+                return causing;
+            }
+        }
+        if (entity instanceof org.bukkit.entity.AreaEffectCloud) {
+            ProjectileSource source = ((org.bukkit.entity.AreaEffectCloud) entity).getSource();
+            if (source instanceof Player) {
+                return (Player) source;
+            }
+            if (source instanceof Entity) {
+                return getPlayerSource((Entity) source, depth + 1);
             }
         }
         return null;
@@ -439,6 +476,8 @@ public class Utils {
         switch (cType) {
         case SKELETON_HORSE:
         case ZOMBIE_HORSE:
+        case ZOMBIE_NAUTILUS:
+        case CAMEL_HUSK:
             return true;
         default:
             return false;

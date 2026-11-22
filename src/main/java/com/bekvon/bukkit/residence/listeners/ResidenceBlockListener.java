@@ -3,7 +3,9 @@ package com.bekvon.bukkit.residence.listeners;
 import java.lang.reflect.InvocationTargetException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 
 import org.bukkit.Location;
@@ -12,8 +14,11 @@ import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
 import org.bukkit.block.BlockState;
+import org.bukkit.block.data.BlockData;
+import org.bukkit.block.data.Directional;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.EntityType;
+import org.bukkit.entity.Item;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Snowman;
 import org.bukkit.entity.minecart.HopperMinecart;
@@ -36,22 +41,31 @@ import org.bukkit.event.block.BlockPistonExtendEvent;
 import org.bukkit.event.block.BlockPistonRetractEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.event.block.BlockSpreadEvent;
+import org.bukkit.event.block.CrafterCraftEvent;
 import org.bukkit.event.block.EntityBlockFormEvent;
 import org.bukkit.event.block.LeavesDecayEvent;
+import org.bukkit.event.block.SpongeAbsorbEvent;
 import org.bukkit.event.entity.EntityChangeBlockEvent;
 import org.bukkit.event.entity.EntityPortalEvent;
+import org.bukkit.event.entity.EntityPortalExitEvent;
+import org.bukkit.event.entity.EntitySpawnEvent;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryMoveItemEvent;
+import org.bukkit.event.inventory.InventoryPickupItemEvent;
 import org.bukkit.event.inventory.InventoryType;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.world.PortalCreateEvent;
 import org.bukkit.event.world.StructureGrowEvent;
+import org.bukkit.inventory.DoubleChestInventory;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryHolder;
+import org.bukkit.inventory.ItemStack;
 import org.bukkit.metadata.FixedMetadataValue;
 import org.bukkit.metadata.MetadataValue;
 import org.bukkit.util.Vector;
 import org.jetbrains.annotations.NotNull;
+
+import io.papermc.paper.event.block.BlockPreDispenseEvent;
 
 import com.bekvon.bukkit.residence.ConfigManager;
 import com.bekvon.bukkit.residence.Residence;
@@ -133,11 +147,86 @@ public class ResidenceBlockListener implements Listener {
 
         Block block = event.getBlock();
 
-        if (FlagPermissions.shouldIgnoreCheck(Flags.grow, block)) {
+        if (plugin.isDisabledWorldListener(block)) {
             return;
         }
-        FlagPermissions perms = FlagPermissions.getPerms(block.getLocation());
-        if (!perms.has(Flags.grow, true)) {
+        if (Flags.grow.isGlobalyEnabled()) {
+            FlagPermissions perms = FlagPermissions.getPerms(block.getLocation());
+            if (!perms.has(Flags.grow, true)) {
+                event.setCancelled(true);
+                return;
+            }
+        }
+        if (Flags.build.isGlobalyEnabled()) {
+            ClaimedResidence targetRes = ClaimedResidence.getByLoc(block.getLocation());
+            if (targetRes != null && targetRes.getPermissions().has(Flags.build, FlagCombo.OnlyFalse)) {
+                Block sourceBlock = findGrowSourceBlock(block, event.getNewState().getType());
+                if (sourceBlock != null && !sourceBlock.equals(block)) {
+                    ClaimedResidence sourceRes = ClaimedResidence.getByLoc(sourceBlock.getLocation());
+                    if (sourceRes == null || (sourceRes != targetRes && !sourceRes.isOwner(targetRes.getOwner()))) {
+                        event.setCancelled(true);
+                    }
+                }
+            }
+        }
+    }
+
+    private static Block findGrowSourceBlock(Block grownBlock, Material newType) {
+        if (newType == null) {
+            return null;
+        }
+        String name = newType.name();
+        if (name.equals("MELON") || name.equals("PUMPKIN")) {
+            String stemName = name + "_STEM";
+            String attachedName = "ATTACHED_" + name + "_STEM";
+            for (BlockFace face : new BlockFace[] { BlockFace.NORTH, BlockFace.SOUTH, BlockFace.EAST, BlockFace.WEST }) {
+                Block adj = grownBlock.getRelative(face);
+                String adjName = adj.getType().name();
+                if (adjName.equals(stemName) || adjName.equals(attachedName)) {
+                    return adj;
+                }
+            }
+            return null;
+        }
+        if (name.startsWith("WEEPING_VINES") || name.startsWith("CAVE_VINES")) {
+            Block above = grownBlock.getRelative(BlockFace.UP);
+            if (!above.getType().isAir()) {
+                return above;
+            }
+        }
+        Block below = grownBlock.getRelative(BlockFace.DOWN);
+        if (!below.getType().isAir() && grownBlock.getType().isAir()) {
+            return below;
+        }
+        return null;
+    }
+
+    @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
+    public void onSpongeAbsorb(SpongeAbsorbEvent event) {
+        Block sponge = event.getBlock();
+        if (plugin.isDisabledWorldListener(sponge)) {
+            return;
+        }
+        ClaimedResidence sourceRes = ClaimedResidence.getByLoc(sponge.getLocation());
+        if (sourceRes != null && Flags.build.isGlobalyEnabled()
+                && sourceRes.getPermissions().has(Flags.build, FlagCombo.OnlyFalse)
+                && sourceRes.getPermissions().has(Flags.destroy, FlagCombo.OnlyFalse)) {
+            event.setCancelled(true);
+            return;
+        }
+        event.getBlocks().removeIf(state -> {
+            ClaimedResidence targetRes = ClaimedResidence.getByLoc(state.getLocation());
+            if (targetRes == null) {
+                return false;
+            }
+            if (sourceRes != null && (sourceRes == targetRes || sourceRes.isOwner(targetRes.getOwner()))) {
+                return false;
+            }
+            FlagPermissions perms = targetRes.getPermissions();
+            return (Flags.destroy.isGlobalyEnabled() && !perms.has(Flags.destroy, perms.has(Flags.build, true)))
+                    || (Flags.build.isGlobalyEnabled() && !perms.has(Flags.build, true));
+        });
+        if (event.getBlocks().isEmpty()) {
             event.setCancelled(true);
         }
     }
@@ -437,27 +526,49 @@ public class ResidenceBlockListener implements Listener {
             event.setCancelled(true);
     }
 
-    @EventHandler
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onFallingBlockPortalExit(EntityPortalExitEvent event) {
+        if (!Flags.fallinprotection.isGlobalyEnabled() || event.getEntityType() != EntityType.FALLING_BLOCK)
+            return;
+        Location exitLoc = event.getTo();
+        if (exitLoc == null)
+            return;
+        ClaimedResidence exitRes = plugin.getResidenceManager().getByLoc(exitLoc);
+        String resName = exitRes == null ? "NULL" : exitRes.getName();
+        event.getEntity().setMetadata(SourceResidenceName, new FixedMetadataValue(plugin, resName));
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onFallingBlockSpawn(EntitySpawnEvent event) {
+        if (!Flags.fallinprotection.isGlobalyEnabled() || event.getEntityType() != EntityType.FALLING_BLOCK)
+            return;
+        Entity ent = event.getEntity();
+        if (ent.hasMetadata(SourceResidenceName))
+            return;
+        ClaimedResidence res = plugin.getResidenceManager().getByLoc(event.getLocation());
+        String resName = res == null ? "NULL" : res.getName();
+        ent.setMetadata(SourceResidenceName, new FixedMetadataValue(plugin, resName));
+    }
+
+    @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
     public void onEntityChangeBlock(EntityChangeBlockEvent event) {
         // Disabling listener if flag disabled globally
-        if (!Flags.fallinprotection.isGlobalyEnabled())
+        if (FlagPermissions.shouldIgnoreCheck(Flags.fallinprotection, event.getBlock()))
             return;
         if (event.getEntityType() != EntityType.FALLING_BLOCK)
             return;
         Entity ent = event.getEntity();
 
-        if (!ent.hasMetadata(SourceResidenceName) && /*
-                                                      * Equals to air when generic falling block is spawned, not when falling block
-                                                      * originates from spawnegg
-                                                      */ event.getTo() == Material.AIR) {
-
-            ClaimedResidence res = plugin.getResidenceManager().getByLoc(ent.getLocation());
-            String resName = res == null ? "NULL" : res.getName();
-            ent.setMetadata(SourceResidenceName, new FixedMetadataValue(plugin, resName));
+        if (event.getTo() == Material.AIR) {
+            if (!ent.hasMetadata(SourceResidenceName)) {
+                ClaimedResidence res = plugin.getResidenceManager().getByLoc(event.getBlock().getLocation());
+                String resName = res == null ? "NULL" : res.getName();
+                ent.setMetadata(SourceResidenceName, new FixedMetadataValue(plugin, resName));
+            }
             return;
         }
 
-        ClaimedResidence res = plugin.getResidenceManager().getByLoc(ent.getLocation());
+        ClaimedResidence res = plugin.getResidenceManager().getByLoc(event.getBlock().getLocation());
 
         if (res != null && res.getPermissions().has(Flags.fallinprotection, FlagCombo.OnlyFalse))
             return;
@@ -478,6 +589,15 @@ public class ResidenceBlockListener implements Listener {
 
         if (res == null || saved.equalsIgnoreCase(resName))
             return;
+
+        if (!"NULL".equalsIgnoreCase(saved)) {
+            ClaimedResidence sourceRes = plugin.getResidenceManager().getByName(saved);
+            if (sourceRes != null && (sourceRes == res
+                    || sourceRes.isOwner(res.getOwner())
+                    || sourceRes.getTopParent() == res.getTopParent())) {
+                return;
+            }
+        }
 
         event.setCancelled(true);
         ent.remove();
@@ -543,12 +663,20 @@ public class ResidenceBlockListener implements Listener {
         MessageInformed.add(player.getUniqueId());
     }
 
-    private boolean checkBlock(ClaimedResidence orRes, Location loc, Vector offset, Material type, Player player) {
+    private boolean checkBlock(ClaimedResidence orRes, Location loc, Vector offset, Material type, boolean isShelf, Player player) {
         Block b = loc.clone().add(offset).getBlock();
-        if (b.getType() != type)
+        if (isShelf) {
+            if (!CMIMaterial.get(b.getType()).containsCriteria(CMIMC.SHELF))
+                return false;
+        } else if (b.getType() != type) {
             return false;
+        }
         ClaimedResidence res = plugin.getResidenceManager().getByLoc(b.getLocation());
-        return res != null && !res.equals(orRes) && !res.isOwner(player) && !res.isTrusted(player);
+        if (Objects.equals(res, orRes))
+            return false;
+        boolean deniedTarget = res != null && !res.isOwner(player) && !res.isTrusted(player);
+        boolean deniedOrigin = orRes != null && !orRes.isOwner(player) && !orRes.isTrusted(player);
+        return deniedTarget || deniedOrigin;
     }
 
     private static final List<Vector> chestVectors = new ArrayList<Vector>(Arrays.asList(
@@ -571,14 +699,17 @@ public class ResidenceBlockListener implements Listener {
         Block block = event.getBlock();
 
         Material type = block.getType();
+        CMIMaterial cmiType = CMIMaterial.get(type);
+        boolean isChest = cmiType.containsCriteria(CMIMC.CHEST);
+        boolean isShelf = cmiType.containsCriteria(CMIMC.SHELF);
 
-        if (!CMIMaterial.get(type).containsCriteria(CMIMC.CHEST))
+        if (!isChest && !isShelf)
             return;
 
         ClaimedResidence orRes = plugin.getResidenceManager().getByLoc(block.getLocation());
 
         for (Vector vector : chestVectors) {
-            if (!checkBlock(orRes, block.getLocation(), vector, type, player))
+            if (!checkBlock(orRes, block.getLocation(), vector, type, isShelf, player))
                 continue;
 
             CMIActionBar.send(player, lm.General_CantPlaceChest.getMessage());
@@ -619,10 +750,13 @@ public class ResidenceBlockListener implements Listener {
                 plugin.getConfigManager().getNewPlayerRangeY() * 2,
                 plugin.getConfigManager().getNewPlayerRangeZ() * 2);
 
-        auto.optimizedResize(player, plugin.getSelectionManager().getSelectionCuboid(player), !plugin.getConfigManager().isNewPlayerFree(), max);
+        boolean checkBalance = !plugin.getConfigManager().isNewPlayerFree()
+                && plugin.getConfigManager().isChargeOnCreation()
+                && plugin.getConfigManager().enableEconomy();
+        auto.optimizedResize(player, plugin.getSelectionManager().getSelectionCuboid(player), checkBalance, max);
 
-        boolean created = plugin.getResidenceManager().addResidence(player, player.getName(), plugin.getSelectionManager().getPlayerLoc1(player),
-                plugin.getSelectionManager().getPlayerLoc2(player), plugin.getConfigManager().isNewPlayerFree());
+        boolean created = plugin.getResidenceManager().addResidence(player, player.getName(), false,
+                !plugin.getConfigManager().isNewPlayerFree());
         if (created) {
             rp.getData().ownedResidence(true);
         }
@@ -635,11 +769,8 @@ public class ResidenceBlockListener implements Listener {
         }
         CMIMaterial mat = CMIMaterial.get(event.getBlockPlaced().getType());
         // Avoid upstream dupe bug(https://github.com/PaperMC/Paper/issues/13586)
+        // End Portal Frame & Bedrock podium are pre-validated in PlayerInteractEvent
         if (mat == CMIMaterial.BEDROCK || mat == CMIMaterial.END_PORTAL_FRAME) {
-            return;
-        }
-        // Multi-block placements: for safety, explicitly specify which types enter the check
-        if (!mat.containsCriteria(CMIMC.BED) && !mat.containsCriteria(CMIMC.DOOR) && !mat.containsCriteria(CMIMC.DOUBLEPLANT)) {
             return;
         }
         Player player = event.getPlayer();
@@ -661,8 +792,10 @@ public class ResidenceBlockListener implements Listener {
             return;
         }
         Block block = event.getBlock();
+        Player player = event.getPlayer();
 
-        if (canPlaceBlock(event.getPlayer(), block, true)) {
+        if (canPlaceBlock(player, block, true)
+                && !shouldDenyGolemOrWitherBuild(block, block.getType(), player, null)) {
             return;
         }
         event.setCancelled(true);
@@ -672,6 +805,172 @@ public class ResidenceBlockListener implements Listener {
                 && !(Version.isPaperBranch() && Version.isCurrentEqualOrHigher(Version.v1_18_2))) {
             ResidenceListener1_17.handlePowderSnow(block);
         }
+    }
+
+    private static final BlockFace[] SIX_FACES = new BlockFace[] {
+            BlockFace.DOWN, BlockFace.UP, BlockFace.NORTH, BlockFace.SOUTH, BlockFace.EAST, BlockFace.WEST
+    };
+
+    private static BlockFace[] getPerpendicularAxes(BlockFace spineDir) {
+        if (spineDir == BlockFace.UP || spineDir == BlockFace.DOWN) {
+            return new BlockFace[] { BlockFace.EAST, BlockFace.SOUTH };
+        }
+        if (spineDir == BlockFace.NORTH || spineDir == BlockFace.SOUTH) {
+            return new BlockFace[] { BlockFace.EAST, BlockFace.UP };
+        }
+        return new BlockFace[] { BlockFace.SOUTH, BlockFace.UP };
+    }
+
+    private static boolean isPumpkinHead(Material mat) {
+        if (mat == null) {
+            return false;
+        }
+        CMIMaterial cmi = CMIMaterial.get(mat);
+        return cmi == CMIMaterial.CARVED_PUMPKIN || cmi == CMIMaterial.JACK_O_LANTERN || cmi == CMIMaterial.PUMPKIN;
+    }
+
+    private static boolean isWitherSkull(Material mat) {
+        if (mat == null) {
+            return false;
+        }
+        CMIMaterial cmi = CMIMaterial.get(mat);
+        return cmi == CMIMaterial.WITHER_SKELETON_SKULL || cmi == CMIMaterial.WITHER_SKELETON_WALL_SKULL;
+    }
+
+    private static boolean isSkullAt(Block candidate, Block placedHead) {
+        return candidate.equals(placedHead) || isWitherSkull(candidate.getType());
+    }
+
+    private static boolean isSoulBlock(Material mat) {
+        if (mat == null) {
+            return false;
+        }
+        CMIMaterial cmi = CMIMaterial.get(mat);
+        return cmi == CMIMaterial.SOUL_SAND || cmi == CMIMaterial.SOUL_SOIL;
+    }
+
+    private static boolean isCopperGolemBaseBlock(Material mat) {
+        if (mat == null || !Version.isCurrentEqualOrHigher(Version.v1_21_9)) {
+            return false;
+        }
+        if (ResidenceListener1_14.isBlockTag(mat, "copper")) {
+            return true;
+        }
+        String name = mat.name();
+        return name.equals("COPPER_BLOCK")
+                || name.endsWith("_COPPER_BLOCK")
+                || name.endsWith("_COPPER")
+                || name.equals("CUT_COPPER");
+    }
+
+    public static boolean shouldDenyGolemOrWitherBuild(Block headBlock, Material placedType, @Nullable Player player, @Nullable ClaimedResidence dispenserSourceRes) {
+        if (headBlock == null || placedType == null) {
+            return false;
+        }
+        if (player != null && ResAdmin.isResAdmin(player)) {
+            return false;
+        }
+        if (isPumpkinHead(placedType)) {
+            for (BlockFace spineDir : SIX_FACES) {
+                Block b1 = headBlock.getRelative(spineDir, 1);
+                if (isCopperGolemBaseBlock(b1.getType())) {
+                    if (shouldDenyStructurePart(b1, player, dispenserSourceRes, true)
+                            || shouldDenyStructurePart(headBlock, player, dispenserSourceRes, true)) {
+                        return true;
+                    }
+                }
+                Block b2 = headBlock.getRelative(spineDir, 2);
+                if (b1.getType() == Material.SNOW_BLOCK && b2.getType() == Material.SNOW_BLOCK) {
+                    if (shouldDenyStructurePart(b1, player, dispenserSourceRes, true)
+                            || shouldDenyStructurePart(b2, player, dispenserSourceRes, true)
+                            || shouldDenyStructurePart(headBlock, player, dispenserSourceRes, true)) {
+                        return true;
+                    }
+                }
+                if (b1.getType() == Material.IRON_BLOCK && b2.getType() == Material.IRON_BLOCK) {
+                    for (BlockFace armDir : getPerpendicularAxes(spineDir)) {
+                        Block arm1 = b1.getRelative(armDir, 1);
+                        Block arm2 = b1.getRelative(armDir.getOppositeFace(), 1);
+                        if (arm1.getType() == Material.IRON_BLOCK && arm2.getType() == Material.IRON_BLOCK) {
+                            if (shouldDenyStructurePart(b1, player, dispenserSourceRes, true)
+                                    || shouldDenyStructurePart(b2, player, dispenserSourceRes, true)
+                                    || shouldDenyStructurePart(arm1, player, dispenserSourceRes, true)
+                                    || shouldDenyStructurePart(arm2, player, dispenserSourceRes, true)
+                                    || shouldDenyStructurePart(headBlock, player, dispenserSourceRes, true)) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+            return false;
+        }
+        if (isWitherSkull(placedType)) {
+            for (BlockFace spineDir : SIX_FACES) {
+                for (BlockFace armDir : getPerpendicularAxes(spineDir)) {
+                    for (int offset = -1; offset <= 1; offset++) {
+                        Block topCenter = offset == 0 ? headBlock : headBlock.getRelative(armDir, offset);
+                        Block s1 = topCenter;
+                        Block s2 = topCenter.getRelative(armDir, 1);
+                        Block s3 = topCenter.getRelative(armDir.getOppositeFace(), 1);
+                        if (!isSkullAt(s1, headBlock) || !isSkullAt(s2, headBlock) || !isSkullAt(s3, headBlock)) {
+                            continue;
+                        }
+                        Block b1 = topCenter.getRelative(spineDir, 1);
+                        Block b2 = topCenter.getRelative(spineDir, 2);
+                        Block arm1 = b1.getRelative(armDir, 1);
+                        Block arm2 = b1.getRelative(armDir.getOppositeFace(), 1);
+                        if (!isSoulBlock(b1.getType()) || !isSoulBlock(b2.getType())
+                                || !isSoulBlock(arm1.getType()) || !isSoulBlock(arm2.getType())) {
+                            continue;
+                        }
+                        for (Block part : new Block[] { s1, s2, s3, b1, b2, arm1, arm2 }) {
+                            if (shouldDenyStructurePart(part, player, dispenserSourceRes, false)) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    private static boolean shouldDenyStructurePart(Block part, @Nullable Player player, @Nullable ClaimedResidence dispenserSourceRes, boolean isAnimalGolem) {
+        if (player != null) {
+            if (!canBreakBlock(player, part, true) || !canPlaceBlock(player, part, true)) {
+                return true;
+            }
+        } else {
+            ClaimedResidence partRes = ClaimedResidence.getByLoc(part.getLocation());
+            if (partRes != null && (dispenserSourceRes == null || (dispenserSourceRes != partRes && !dispenserSourceRes.isOwner(partRes.getOwner())))) {
+                FlagPermissions perms = partRes.getPermissions();
+                if ((Flags.build.isGlobalyEnabled() && !perms.has(Flags.build, true))
+                        || (Flags.destroy.isGlobalyEnabled() && !perms.has(Flags.destroy, perms.has(Flags.build, true)))) {
+                    return true;
+                }
+            }
+        }
+        FlagPermissions partPerms = FlagPermissions.getPerms(part.getLocation());
+        if (isAnimalGolem) {
+            if ((Flags.animals.isGlobalyEnabled() && !partPerms.has(Flags.animals, true))
+                    || (Flags.canimals.isGlobalyEnabled() && partPerms.has(Flags.canimals, FlagCombo.OnlyFalse))) {
+                if (player != null) {
+                    lm.Flag_Deny.sendMessage(player, Flags.canimals);
+                }
+                return true;
+            }
+        } else {
+            if ((Flags.witherspawn.isGlobalyEnabled() && partPerms.has(Flags.witherspawn, FlagCombo.OnlyFalse))
+                    || (Flags.monsters.isGlobalyEnabled() && partPerms.has(Flags.monsters, FlagCombo.OnlyFalse))
+                    || (Flags.cmonsters.isGlobalyEnabled() && partPerms.has(Flags.cmonsters, FlagCombo.OnlyFalse))) {
+                if (player != null) {
+                    lm.Flag_Deny.sendMessage(player, Flags.witherspawn);
+                }
+                return true;
+            }
+        }
+        return false;
     }
 
     public static boolean canPlaceBlock(@NotNull Player player, @NotNull Block block, boolean informPlayer) {
@@ -731,26 +1030,39 @@ public class ResidenceBlockListener implements Listener {
         return false;
     }
 
+    private static boolean isPistonBlockedByLocation(ClaimedResidence pistonRes, Location loc) {
+        ClaimedResidence targetRes = ClaimedResidence.getByLoc(loc);
+        if (targetRes == null) {
+            return false;
+        }
+        if (pistonRes != null && (pistonRes == targetRes || pistonRes.isOwner(targetRes.getOwner()))) {
+            return false;
+        }
+        return targetRes.getPermissions().has(Flags.pistonprotection, FlagCombo.OnlyTrue);
+    }
+
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
     public void onBlockPistonRetract(BlockPistonRetractEvent event) {
 
         Block piston = event.getBlock();
 
-        if (FlagPermissions.shouldIgnoreCheck(Flags.piston, piston)) {
+        if (plugin.isDisabledWorldListener(piston)) {
             return;
         }
         ClaimedResidence pistonRes = ClaimedResidence.getByLoc(piston.getLocation());
 
-        FlagPermissions perms = (pistonRes != null)
-                ? pistonRes.getPermissions()
-                : Residence.getInstance().getWorldFlags().getPerms(piston.getWorld());
+        if (Flags.piston.isGlobalyEnabled()) {
+            FlagPermissions perms = (pistonRes != null)
+                    ? pistonRes.getPermissions()
+                    : Residence.getInstance().getWorldFlags().getPerms(piston.getWorld());
 
-        if (!perms.has(Flags.piston, true)) {
-            event.setCancelled(true);
-            return;
+            if (!perms.has(Flags.piston, true)) {
+                event.setCancelled(true);
+                return;
+            }
         }
 
-        // Disabling listener if flag disabled globally
+        // Disabling cross-border check if pistonprotection flag disabled globally
         if (!Flags.pistonprotection.isGlobalyEnabled())
             return;
 
@@ -758,16 +1070,11 @@ public class ResidenceBlockListener implements Listener {
             return;
 
         List<Block> blocks = Utils.getPistonRetractBlocks(event);
+        BlockFace direction = event.getDirection();
 
         for (Block block : blocks) {
-            ClaimedResidence blockRes = ClaimedResidence.getByLoc(block.getLocation());
-            if (blockRes == null) {
-                continue;
-            }
-            if (pistonRes != null && (pistonRes == blockRes || pistonRes.isOwner(blockRes.getOwner()))) {
-                continue;
-            }
-            if (blockRes.getPermissions().has(Flags.pistonprotection, FlagCombo.OnlyTrue)) {
+            if (isPistonBlockedByLocation(pistonRes, block.getLocation())
+                    || isPistonBlockedByLocation(pistonRes, block.getRelative(direction).getLocation())) {
                 event.setCancelled(true);
                 return;
             }
@@ -779,37 +1086,37 @@ public class ResidenceBlockListener implements Listener {
 
         Block piston = event.getBlock();
 
-        if (FlagPermissions.shouldIgnoreCheck(Flags.piston, piston)) {
+        if (plugin.isDisabledWorldListener(piston)) {
             return;
         }
         ClaimedResidence pistonRes = ClaimedResidence.getByLoc(piston.getLocation());
 
-        FlagPermissions perms = (pistonRes != null)
-                ? pistonRes.getPermissions()
-                : Residence.getInstance().getWorldFlags().getPerms(piston.getWorld());
+        if (Flags.piston.isGlobalyEnabled()) {
+            FlagPermissions perms = (pistonRes != null)
+                    ? pistonRes.getPermissions()
+                    : Residence.getInstance().getWorldFlags().getPerms(piston.getWorld());
 
-        if (!perms.has(Flags.piston, true)) {
+            if (!perms.has(Flags.piston, true)) {
+                event.setCancelled(true);
+                return;
+            }
+        }
+
+        // Disabling cross-border check if pistonprotection flag disabled globally
+        if (!Flags.pistonprotection.isGlobalyEnabled())
+            return;
+
+        BlockFace direction = event.getDirection();
+        if (isPistonBlockedByLocation(pistonRes, piston.getRelative(direction).getLocation())) {
             event.setCancelled(true);
             return;
         }
 
-        // Disabling listener if flag disabled globally
-        if (!Flags.pistonprotection.isGlobalyEnabled())
-            return;
-
         List<Block> blocks = event.getBlocks();
-        BlockFace direction = event.getDirection();
         for (int i = blocks.size() - 1; i >= 0; i--) {
-            Location targetLoc = blocks.get(i).getRelative(direction).getLocation();
-
-            ClaimedResidence targetRes = ClaimedResidence.getByLoc(targetLoc);
-            if (targetRes == null) {
-                continue;
-            }
-            if (pistonRes != null && (pistonRes == targetRes || pistonRes.isOwner(targetRes.getOwner()))) {
-                continue;
-            }
-            if (targetRes.getPermissions().has(Flags.pistonprotection, FlagCombo.OnlyTrue)) {
+            Block block = blocks.get(i);
+            if (isPistonBlockedByLocation(pistonRes, block.getLocation())
+                    || isPistonBlockedByLocation(pistonRes, block.getRelative(direction).getLocation())) {
                 event.setCancelled(true);
                 return;
             }
@@ -949,52 +1256,100 @@ public class ResidenceBlockListener implements Listener {
     }
 
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
-    public void onDispense(BlockDispenseEvent event) {
-
-        Block block = event.getBlock();
-
-        if (FlagPermissions.shouldIgnoreCheck(Flags.build, block)) {
-            return;
+    public void onPreDispense(BlockPreDispenseEvent event) {
+        if (shouldCancelDispenseOrCraft(event.getBlock(), event.getItemStack())) {
+            event.setCancelled(true);
         }
-        if (CMIMaterial.get(block.getType()) != CMIMaterial.DISPENSER)
-            return;
+    }
 
-        @SuppressWarnings("removal")
-        BlockFace blockFace = Version.isCurrentEqualOrHigher(Version.v1_13_0)
-                ? ResidenceBlockData.getDispenserFace(block)
-                : (((org.bukkit.material.Dispenser) block.getState().getData()).getFacing());
+    @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
+    public void onCrafterCraft(CrafterCraftEvent event) {
+        if (shouldCancelDispenseOrCraft(event.getBlock(), event.getResult())) {
+            event.setCancelled(true);
+        }
+    }
 
+    @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
+    public void onDispense(BlockDispenseEvent event) {
+        if (shouldCancelDispenseOrCraft(event.getBlock(), event.getItem())) {
+            event.setCancelled(true);
+        }
+    }
+
+    private boolean shouldCancelDispenseOrCraft(Block block, ItemStack itemStack) {
+        if (block == null || plugin.isDisabledWorldListener(block)) {
+            return false;
+        }
+        BlockData blockData = block.getBlockData();
+        if (!(blockData instanceof Directional)) {
+            return false;
+        }
+        BlockFace blockFace = ((Directional) blockData).getFacing();
         Block target = block.getRelative(blockFace);
+        Block target2 = block.getRelative(blockFace, 2);
+
+        ClaimedResidence sourceRes = ClaimedResidence.getByLoc(block.getLocation());
         ClaimedResidence targetRes = ClaimedResidence.getByLoc(target.getLocation());
+        ClaimedResidence target2Res = ClaimedResidence.getByLoc(target2.getLocation());
+
+        CMIMaterial mat = CMIMaterial.get(itemStack);
 
         if (targetRes == null) {
             ConfigManager cfg = plugin.getConfigManager();
-            CMIMaterial mat = CMIMaterial.get(event.getItem());
-
-            boolean shouldDeny = (cfg.isNoLavaPlace() && mat == CMIMaterial.LAVA_BUCKET)
+            boolean shouldDenyWorldPlace = (cfg.isNoLavaPlace() && mat == CMIMaterial.LAVA_BUCKET)
                     || (cfg.isNoWaterPlace() && (mat == CMIMaterial.WATER_BUCKET || mat.containsCriteria(CMIMC.BUCKETANIMAL)));
+            if (shouldDenyWorldPlace && target.getY() >= cfg.getPlaceLevel()
+                    && cfg.getNoPlaceWorlds().contains(target.getWorld().getName())) {
+                return true;
+            }
+        }
 
-            if (!shouldDeny) {
-                return;
-            }
-            if (target.getY() < cfg.getPlaceLevel()) {
-                return;
-            }
-            if (!cfg.getNoPlaceWorlds().contains(target.getWorld().getName())) {
-                return;
-            }
-            event.setCancelled(true);
-            return;
+        if (isCrossResidenceDispenseDenied(sourceRes, targetRes, target, mat)) {
+            return true;
         }
-        ClaimedResidence sourceRes = ClaimedResidence.getByLoc(block.getLocation());
-        // source & target in Same Res, or have Same Res owner
+        if (isCrossResidenceDispenseDenied(sourceRes, target2Res, target2, mat)) {
+            return true;
+        }
+        if (itemStack != null && (isPumpkinHead(itemStack.getType()) || isWitherSkull(itemStack.getType()))) {
+            if (shouldDenyGolemOrWitherBuild(target, itemStack.getType(), null, sourceRes)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isCrossResidenceDispenseDenied(ClaimedResidence sourceRes, ClaimedResidence targetRes, Block targetBlock, CMIMaterial dispensedMat) {
+        if (targetRes == null) {
+            return false;
+        }
         if (sourceRes != null && (sourceRes == targetRes || sourceRes.isOwner(targetRes.getOwner()))) {
-            return;
+            return false;
         }
-        if (targetRes.getPermissions().has(Flags.build, true)) {
-            return;
+        FlagPermissions perms = targetRes.getPermissions();
+        if (Flags.build.isGlobalyEnabled() && !perms.has(Flags.build, true)) {
+            return true;
         }
-        event.setCancelled(true);
+        if (Flags.container.isGlobalyEnabled() && Utils.isContainer(targetBlock.getType()) && !perms.has(Flags.container, true)) {
+            return true;
+        }
+        if (dispensedMat != null) {
+            if ((dispensedMat.containsCriteria(CMIMC.BOAT) || dispensedMat.containsCriteria(CMIMC.MINECART))
+                    && Flags.vehicleplacing.isGlobalyEnabled()
+                    && !perms.has(Flags.vehicleplacing, perms.has(Flags.build, true))) {
+                return true;
+            }
+            if ((dispensedMat == CMIMaterial.FLINT_AND_STEEL || dispensedMat == CMIMaterial.FIRE_CHARGE)
+                    && Flags.ignite.isGlobalyEnabled()
+                    && !perms.has(Flags.ignite, perms.has(Flags.build, true))) {
+                return true;
+            }
+            if (dispensedMat == CMIMaterial.TNT
+                    && Flags.tnt.isGlobalyEnabled()
+                    && !perms.has(Flags.tnt, perms.has(Flags.explode, true))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
@@ -1016,42 +1371,32 @@ public class ResidenceBlockListener implements Listener {
         if (FlagPermissions.shouldIgnoreCheck(Flags.build, world)) {
             return;
         }
-        if (!event.getReason().toString().equals("NETHER_PAIR"))
-            return;
 
-        Player player = null;
-        // Crude attempt to get player object. Older versions will create exception of
-        // missing method
-        try {
-            if (event.getEntity() instanceof Player)
-                player = (Player) event.getEntity();
-        } catch (Throwable e) {
-        }
+        Entity entity = event.getEntity();
+        Player player = entity instanceof Player ? (Player) entity : null;
         if (player != null && (player.hasMetadata("NPC") || ResAdmin.isResAdmin(player))) {
             return;
         }
-        Iterable<?> blocks;
-        try {
-            blocks = (Iterable<?>) event.getClass().getMethod("getBlocks").invoke(event);
-        } catch (ReflectiveOperationException | ClassCastException exception) {
-            plugin.getLogger().log(java.util.logging.Level.WARNING, "Could not check the destination of a nether portal", exception);
-            event.setCancelled(true);
-            return;
-        }
 
+        boolean isEndPlatform = event.getReason() == PortalCreateEvent.CreateReason.END_PLATFORM;
         FlagPermissions worldPerms = null;
-        for (Object block : blocks) {
-            Location loc = block instanceof BlockState ? ((BlockState) block).getLocation() : ((Block) block).getLocation();
+        for (BlockState block : event.getBlocks()) {
+            Location loc = block.getLocation();
             ClaimedResidence res = ClaimedResidence.getByLoc(loc);
             if (res == null && worldPerms == null) {
-                worldPerms = player == null
+                worldPerms = (player == null || isEndPlatform)
                         ? plugin.getWorldFlags().getPerms(world)
                         : plugin.getWorldFlags().getPerms(world.getName(), ResidencePlayer.get(player).getGroup(world.getName(), true).getGroupName());
             }
             FlagPermissions perms = res == null ? worldPerms : res.getPermissions();
-            boolean canBuild = player == null ? perms.has(Flags.build, true) : perms.playerHas(player, Flags.build, true);
+            boolean canBuild;
+            if (player == null || isEndPlatform) {
+                canBuild = perms.has(Flags.build, true);
+            } else {
+                canBuild = perms.playerHas(player, Flags.place, perms.playerHas(player, Flags.build, true));
+            }
             if (!canBuild) {
-                if (player != null)
+                if (player != null && !isEndPlatform)
                     lm.Invalid_PortalDestination.sendMessage(player);
                 event.setCancelled(true);
                 return;
@@ -1115,15 +1460,37 @@ public class ResidenceBlockListener implements Listener {
 
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
     public void onHopperMoveItem(InventoryMoveItemEvent event) {
+        List<Location> sourceLocs = getInventoryLocations(event.getSource());
+        List<Location> destLocs = getInventoryLocations(event.getDestination());
+
         // Prevent trolls from pushing derailed hopper minecarts into the Residence to steal items from containers
         if (Flags.minecartsuction.isGlobalyEnabled()) {
             InventoryHolder holder = Utils.getHolderNoSnapshot(event.getInitiator());
+            if (!(holder instanceof HopperMinecart)) {
+                InventoryHolder destHolder = Utils.getHolderNoSnapshot(event.getDestination());
+                if (destHolder instanceof HopperMinecart) {
+                    holder = destHolder;
+                }
+            }
             if (holder instanceof HopperMinecart) {
-                Location loc = ((HopperMinecart) holder).getLocation();
-                if (!CMIMaterial.get(loc.getBlock().getType()).containsCriteria(CMIMC.RAIL)
-                        && FlagPermissions.has(loc, Flags.minecartsuction, FlagCombo.OnlyFalse)) {
-                    event.setCancelled(true);
-                    return;
+                Location cartLoc = ((HopperMinecart) holder).getLocation();
+                if (!CMIMaterial.get(cartLoc.getBlock().getType()).containsCriteria(CMIMC.RAIL)) {
+                    if (isMinecartSuctionDenied(cartLoc)) {
+                        event.setCancelled(true);
+                        return;
+                    }
+                    for (Location sLoc : sourceLocs) {
+                        if (isMinecartSuctionDenied(sLoc)) {
+                            event.setCancelled(true);
+                            return;
+                        }
+                    }
+                    for (Location dLoc : destLocs) {
+                        if (isMinecartSuctionDenied(dLoc)) {
+                            event.setCancelled(true);
+                            return;
+                        }
+                    }
                 }
             }
         }
@@ -1131,57 +1498,111 @@ public class ResidenceBlockListener implements Listener {
         if (!Flags.container.isGlobalyEnabled() || !plugin.getConfigManager().getHopperCrossResidenceCheck()) {
             return;
         }
-        Location sourceLoc = null;
-        Location destLoc = null;
-
-        if (Version.isCurrentEqualOrHigher(Version.v1_9_0)) {
-            sourceLoc = event.getSource().getLocation();
-            destLoc = event.getDestination().getLocation();
-
-            // Legacy versions do not support Inventory.getLocation() directly
-        } else {
-            InventoryHolder sourceHolder = event.getSource().getHolder();
-            if (sourceHolder instanceof BlockState) {
-                sourceLoc = ((BlockState) sourceHolder).getLocation();
-            } else if (sourceHolder instanceof Entity) {
-                sourceLoc = ((Entity) sourceHolder).getLocation();
-            }
-
-            InventoryHolder destHolder = event.getDestination().getHolder();
-            if (destHolder instanceof BlockState) {
-                destLoc = ((BlockState) destHolder).getLocation();
-            } else if (destHolder instanceof Entity) {
-                destLoc = ((Entity) destHolder).getLocation();
+        for (Location sourceLoc : sourceLocs) {
+            for (Location destLoc : destLocs) {
+                if (!isHopperTransferAllowed(sourceLoc, destLoc)) {
+                    event.setCancelled(true);
+                    return;
+                }
             }
         }
+    }
+
+    @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
+    public void onInventoryPickupItem(InventoryPickupItemEvent event) {
+        Item item = event.getItem();
+        if (item == null || plugin.isDisabledWorldListener(item)) {
+            return;
+        }
+        Location itemLoc = item.getLocation();
+        if (Flags.itempickup.isGlobalyEnabled() && FlagPermissions.has(itemLoc, Flags.itempickup, FlagCombo.OnlyFalse)) {
+            event.setCancelled(true);
+            return;
+        }
+
+        Inventory inv = event.getInventory();
+        InventoryHolder holder = Utils.getHolderNoSnapshot(inv);
+        if (Flags.minecartsuction.isGlobalyEnabled() && holder instanceof HopperMinecart) {
+            Location cartLoc = ((HopperMinecart) holder).getLocation();
+            if (!CMIMaterial.get(cartLoc.getBlock().getType()).containsCriteria(CMIMC.RAIL)
+                    && (isMinecartSuctionDenied(cartLoc) || isMinecartSuctionDenied(itemLoc))) {
+                event.setCancelled(true);
+                return;
+            }
+        }
+
+        if (!Flags.container.isGlobalyEnabled() || !plugin.getConfigManager().getHopperCrossResidenceCheck()) {
+            return;
+        }
+        for (Location invLoc : getInventoryLocations(inv)) {
+            if (!isHopperTransferAllowed(itemLoc, invLoc)) {
+                event.setCancelled(true);
+                return;
+            }
+        }
+    }
+
+    private static boolean isMinecartSuctionDenied(Location loc) {
+        if (loc == null) {
+            return false;
+        }
+        FlagPermissions perms = FlagPermissions.getPerms(loc);
+        return !perms.has(Flags.minecartsuction, perms.has(Flags.container, true));
+    }
+
+    private static boolean isHopperTransferAllowed(Location sourceLoc, Location destLoc) {
         ClaimedResidence sourceRes = ClaimedResidence.getByLoc(sourceLoc);
         ClaimedResidence destRes = ClaimedResidence.getByLoc(destLoc);
         // Source and Dest not in Res
         if (sourceRes == null && destRes == null) {
-            return;
+            return true;
         }
         // Source and Dest in Res
         if (sourceRes != null && destRes != null) {
             // in Same Res, or have Same Res owner
             if (sourceRes == destRes || sourceRes.isOwner(destRes.getOwner())) {
-                return;
+                return true;
             }
             // Not in Same Res and not Same Res owner; hopper can be Source or Dest
-            if (sourceRes.getPermissions().has(Flags.container, true)
-                    && destRes.getPermissions().has(Flags.container, true)) {
-                return;
+            return sourceRes.getPermissions().has(Flags.container, true)
+                    && destRes.getPermissions().has(Flags.container, true);
+        }
+        if (sourceRes != null) {
+            return sourceRes.getPermissions().has(Flags.container, true);
+        }
+        return destRes.getPermissions().has(Flags.container, true);
+    }
+
+    private static List<Location> getInventoryLocations(Inventory inventory) {
+        if (inventory == null) {
+            return Collections.emptyList();
+        }
+        if (inventory instanceof DoubleChestInventory) {
+            DoubleChestInventory doubleInv = (DoubleChestInventory) inventory;
+            List<Location> locs = new ArrayList<>(2);
+            Location leftLoc = doubleInv.getLeftSide() != null ? doubleInv.getLeftSide().getLocation() : null;
+            Location rightLoc = doubleInv.getRightSide() != null ? doubleInv.getRightSide().getLocation() : null;
+            if (leftLoc != null) {
+                locs.add(leftLoc);
             }
-            // Source in Res, Dest definitely not in Res
-        } else if (sourceRes != null) {
-            if (sourceRes.getPermissions().has(Flags.container, true)) {
-                return;
+            if (rightLoc != null) {
+                locs.add(rightLoc);
             }
-            // Dest definitely in Res, Source definitely not in Res
-        } else {
-            if (destRes.getPermissions().has(Flags.container, true)) {
-                return;
+            if (!locs.isEmpty()) {
+                return locs;
             }
         }
-        event.setCancelled(true);
+        Location loc = inventory.getLocation();
+        if (loc != null) {
+            return Collections.singletonList(loc);
+        }
+        InventoryHolder holder = Utils.getHolderNoSnapshot(inventory);
+        if (holder instanceof BlockState) {
+            return Collections.singletonList(((BlockState) holder).getLocation());
+        }
+        if (holder instanceof Entity) {
+            return Collections.singletonList(((Entity) holder).getLocation());
+        }
+        return Collections.emptyList();
     }
 }
