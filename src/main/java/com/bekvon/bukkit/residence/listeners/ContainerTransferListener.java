@@ -90,6 +90,7 @@ public final class ContainerTransferListener implements Listener {
             if (!top)
                 slot = -1;
             break;
+        case "HOTBAR_MOVE_AND_READD":
         case "HOTBAR_SWAP":
             if (!top)
                 return;
@@ -106,7 +107,6 @@ public final class ContainerTransferListener implements Listener {
             if (hotbarButton < 0 && !"SWAP_OFFHAND".equals(event.getClick().name()))
                 transfer |= PUT;
             break;
-        case "HOTBAR_MOVE_AND_READD":
         case "PICKUP_ALL":
         case "PICKUP_SOME":
         case "PICKUP_HALF":

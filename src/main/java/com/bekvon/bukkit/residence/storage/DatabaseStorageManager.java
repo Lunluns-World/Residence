@@ -349,12 +349,37 @@ public class DatabaseStorageManager {
                     + "server_name VARCHAR(64) NOT NULL,"
                     + "res_key VARCHAR(128) NOT NULL,"
                     + "res_name VARCHAR(128) NOT NULL,"
+                    + "res_uuid VARCHAR(36),"
                     + "original_owner_uuid VARCHAR(36) NOT NULL,"
                     + "original_owner_name VARCHAR(64) NOT NULL,"
                     + "archived_at BIGINT NOT NULL,"
                     + "PRIMARY KEY (server_name, res_key)"
                     + ")");
+
+            // Idempotent migration for existing cleanup_reclaim tables created before res_uuid was added
+            if (!hasColumn(conn, tablePrefix + "cleanup_reclaim", "res_uuid")) {
+                try {
+                    st.executeUpdate("ALTER TABLE " + tablePrefix + "cleanup_reclaim ADD COLUMN res_uuid VARCHAR(36)");
+                } catch (SQLException ignored) {
+                }
+            }
         }
+    }
+
+    private static boolean hasColumn(Connection conn, String tableName, String columnName) {
+        try {
+            java.sql.DatabaseMetaData meta = conn.getMetaData();
+            try (ResultSet rs = meta.getColumns(conn.getCatalog(), null, tableName, columnName)) {
+                if (rs.next())
+                    return true;
+            }
+            try (ResultSet rs = meta.getColumns(conn.getCatalog(), null, tableName.toLowerCase(), columnName.toLowerCase())) {
+                if (rs.next())
+                    return true;
+            }
+        } catch (SQLException ignored) {
+        }
+        return false;
     }
 
     private static String normalizeServerKey(String serverName) {
@@ -1261,17 +1286,18 @@ public class DatabaseStorageManager {
         String srv = normalizeServerKey(entry.getServerName());
         String key = entry.getResKey().toLowerCase();
         String name = entry.getResName().length() > 128 ? entry.getResName().substring(0, 128) : entry.getResName();
+        String resUuidStr = entry.getResUuid() == null ? null : entry.getResUuid().toString();
         String ownerName = entry.getOriginalOwnerName().length() > 64 ? entry.getOriginalOwnerName().substring(0, 64) : entry.getOriginalOwnerName();
         String sql;
         if (storageType == StorageType.MYSQL || storageType == StorageType.MARIADB) {
-            sql = "INSERT INTO " + tablePrefix + "cleanup_reclaim (server_name, res_key, res_name, original_owner_uuid, original_owner_name, archived_at) "
-                    + "VALUES (?, ?, ?, ?, ?, ?) "
-                    + "ON DUPLICATE KEY UPDATE res_name = VALUES(res_name), original_owner_uuid = VALUES(original_owner_uuid), "
+            sql = "INSERT INTO " + tablePrefix + "cleanup_reclaim (server_name, res_key, res_name, res_uuid, original_owner_uuid, original_owner_name, archived_at) "
+                    + "VALUES (?, ?, ?, ?, ?, ?, ?) "
+                    + "ON DUPLICATE KEY UPDATE res_name = VALUES(res_name), res_uuid = VALUES(res_uuid), original_owner_uuid = VALUES(original_owner_uuid), "
                     + "original_owner_name = VALUES(original_owner_name), archived_at = VALUES(archived_at)";
         } else {
-            sql = "INSERT INTO " + tablePrefix + "cleanup_reclaim (server_name, res_key, res_name, original_owner_uuid, original_owner_name, archived_at) "
-                    + "VALUES (?, ?, ?, ?, ?, ?) "
-                    + "ON CONFLICT (server_name, res_key) DO UPDATE SET res_name = excluded.res_name, "
+            sql = "INSERT INTO " + tablePrefix + "cleanup_reclaim (server_name, res_key, res_name, res_uuid, original_owner_uuid, original_owner_name, archived_at) "
+                    + "VALUES (?, ?, ?, ?, ?, ?, ?) "
+                    + "ON CONFLICT (server_name, res_key) DO UPDATE SET res_name = excluded.res_name, res_uuid = excluded.res_uuid, "
                     + "original_owner_uuid = excluded.original_owner_uuid, original_owner_name = excluded.original_owner_name, "
                     + "archived_at = excluded.archived_at";
         }
@@ -1280,9 +1306,10 @@ public class DatabaseStorageManager {
                 ps.setString(1, srv);
                 ps.setString(2, key);
                 ps.setString(3, name);
-                ps.setString(4, entry.getOriginalOwnerUuid().toString());
-                ps.setString(5, ownerName);
-                ps.setLong(6, entry.getArchivedAt());
+                ps.setString(4, resUuidStr);
+                ps.setString(5, entry.getOriginalOwnerUuid().toString());
+                ps.setString(6, ownerName);
+                ps.setLong(7, entry.getArchivedAt());
                 ps.executeUpdate();
             }
         }
@@ -1293,7 +1320,7 @@ public class DatabaseStorageManager {
         if (ownerUuid == null)
             return list;
         String srv = normalizeServerKey(serverName);
-        String sql = "SELECT server_name, res_key, res_name, original_owner_uuid, original_owner_name, archived_at "
+        String sql = "SELECT server_name, res_key, res_name, res_uuid, original_owner_uuid, original_owner_name, archived_at "
                 + "FROM " + tablePrefix + "cleanup_reclaim WHERE server_name = ? AND original_owner_uuid = ?";
         try (Connection conn = openConnection(); PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, srv);
@@ -1306,6 +1333,7 @@ public class DatabaseStorageManager {
                                 rs.getString("server_name"),
                                 rs.getString("res_key"),
                                 rs.getString("res_name"),
+                                parseUuid(rs.getString("res_uuid")),
                                 uuid,
                                 rs.getString("original_owner_name"),
                                 rs.getLong("archived_at")));
@@ -1319,7 +1347,7 @@ public class DatabaseStorageManager {
     public List<CleanupReclaimManager.ReclaimEntry> loadReturningCleanupReclaims(String serverName) throws SQLException {
         List<CleanupReclaimManager.ReclaimEntry> list = new ArrayList<>();
         String srv = normalizeServerKey(serverName);
-        String sql = "SELECT r.server_name, r.res_key, r.res_name, r.original_owner_uuid, r.original_owner_name, r.archived_at "
+        String sql = "SELECT r.server_name, r.res_key, r.res_name, r.res_uuid, r.original_owner_uuid, r.original_owner_name, r.archived_at "
                 + "FROM " + tablePrefix + "cleanup_reclaim r "
                 + "INNER JOIN " + tablePrefix + "player_activity a ON a.player_uuid = r.original_owner_uuid "
                 + "WHERE r.server_name = ? AND a.last_seen > r.archived_at";
@@ -1333,6 +1361,7 @@ public class DatabaseStorageManager {
                                 rs.getString("server_name"),
                                 rs.getString("res_key"),
                                 rs.getString("res_name"),
+                                parseUuid(rs.getString("res_uuid")),
                                 uuid,
                                 rs.getString("original_owner_name"),
                                 rs.getLong("archived_at")));

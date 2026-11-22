@@ -198,6 +198,7 @@ public class LocaleManager {
         String[] sections = new String[] {
                 path + "flags.SubCommands",
                 "Language.Gui",
+                "Language.Residence",
                 path + "gui",
                 path + "migrate"
         };
