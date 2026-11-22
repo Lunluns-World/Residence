@@ -61,6 +61,7 @@ import com.bekvon.bukkit.residence.economy.rent.RentManager;
 import com.bekvon.bukkit.residence.crossserver.CrossServerListener;
 import com.bekvon.bukkit.residence.crossserver.CrossServerManager;
 import com.bekvon.bukkit.residence.gui.FlagUtil;
+import com.bekvon.bukkit.residence.gui.MarketGui;
 import com.bekvon.bukkit.residence.gui.ResidenceGuiMetaManager;
 import com.bekvon.bukkit.residence.gui.ResidenceListGui;
 import com.bekvon.bukkit.residence.storage.DatabaseStorageManager;
@@ -246,6 +247,7 @@ public class Residence extends JavaPlugin {
     private com.bekvon.bukkit.residence.storage.PlayerLimitManager playerLimitManager = null;
     private com.bekvon.bukkit.residence.storage.CleanupReclaimManager cleanupReclaimManager = null;
     private ResidenceListGui residenceListGui = null;
+    private MarketGui marketGui = null;
 
     public DatabaseStorageManager getDatabaseStorageManager() {
         return databaseStorageManager;
@@ -271,6 +273,12 @@ public class Residence extends JavaPlugin {
         if (residenceListGui == null)
             residenceListGui = new ResidenceListGui(this);
         return residenceListGui;
+    }
+
+    public MarketGui getMarketGui() {
+        if (marketGui == null)
+            marketGui = new MarketGui(this);
+        return marketGui;
     }
 
     public ResidencePlayerInterface getPlayerManagerAPI() {
@@ -740,6 +748,7 @@ public class Residence extends JavaPlugin {
                 pm.registerEvents(new ShopListener(this), this);
                 pm.registerEvents(new ResidenceRaidListener(), this);
                 pm.registerEvents(getResidenceListGui(), this);
+                pm.registerEvents(getMarketGui(), this);
                 pm.registerEvents(new CrossServerListener(this), this);
 
                 if (Version.isCurrentLower(Version.v1_16_0)) {

@@ -251,6 +251,21 @@ public class ResidenceListGui implements Listener {
             }
         });
 
+        // Slot 52: Open Market GUI (when economy is enabled)
+        if (plugin.getConfigManager().enableEconomy()) {
+            gui.addButton(new CMIGuiButton(52, buildControlItem(
+                    CMIMaterial.EMERALD,
+                    "&a領地市場",
+                    Arrays.asList(
+                            "&7點擊開啟領地買賣／租賃市場 GUI",
+                            "&8也可直接輸入 /res market"))) {
+                @Override
+                public void click(GUIClickType type) {
+                    plugin.getMarketGui().openMarketBrowser(player, MarketGui.MarketFilter.ALL, MarketGui.MarketSort.PRICE_ASC, resadmin, 1);
+                }
+            });
+        }
+
         gui.addPagination(pi);
         gui.fillEmptyButtons();
         gui.open();
@@ -491,6 +506,30 @@ public class ResidenceListGui implements Listener {
                     openSubzonesGui(player, localRes, resadmin, 1, reopenManage);
                 }
             });
+
+            // Slot 22: Market Management (Sell / Rent)
+            if (plugin.getConfigManager().enableEconomy()) {
+                boolean isForSale = plugin.getTransactionManager().isForSale(localRes);
+                boolean isForRent = plugin.getConfigManager().enabledRentSystem() && plugin.getRentManager().isForRent(localRes);
+                String status = isForSale ? "&a出售中" : (isForRent ? (localRes.isRented() ? "&e已租出" : "&b待租中") : "&7未上架");
+                gui.addButton(new CMIGuiButton(22, buildControlItem(
+                        CMIMaterial.EMERALD,
+                        "&a市場設定（出售／出租）",
+                        Arrays.asList(
+                                "&7目前狀態：" + status,
+                                "&7點擊上架出售、上架出租或下架"))) {
+                    @Override
+                    public void click(GUIClickType type) {
+                        ClaimedResidence live = plugin.getResidenceManager().getByName(entry.getResName());
+                        if (live == null) {
+                            lm.Invalid_Residence.sendMessage(player);
+                            player.closeInventory();
+                            return;
+                        }
+                        plugin.getMarketGui().openOwnerMarketGui(player, live, resadmin, reopenManage);
+                    }
+                });
+            }
 
             // Slot 25: Delete Residence (with Confirmation GUI)
             gui.addButton(new CMIGuiButton(25, buildControlItem(
