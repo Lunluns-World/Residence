@@ -84,6 +84,8 @@ public class CrossServerManager {
                 plugin.getGuiMetaManager().refreshFromDatabaseNow();
             if (plugin.getPlayerLimitManager() != null)
                 plugin.getPlayerLimitManager().refreshAllFromDatabaseNow();
+            if (plugin.getCleanupReclaimManager() != null)
+                plugin.getCleanupReclaimManager().reconcileCrossServerReturnsNow();
             syncLocalIndexNow();
             refreshRemoteCacheNow();
         }, intervalSeconds, intervalSeconds, TimeUnit.SECONDS);

@@ -21,6 +21,9 @@ public class CrossServerListener implements Listener {
         if (plugin.getPlayerLimitManager() != null) {
             plugin.getPlayerLimitManager().refreshPlayerAsync(event.getPlayer().getUniqueId());
         }
+        if (plugin.getCleanupReclaimManager() != null) {
+            plugin.getCleanupReclaimManager().restoreForPlayerAsync(event.getPlayer());
+        }
         if (plugin.getCrossServerManager() != null) {
             plugin.getCrossServerManager().recordPlayerActivityAsync(event.getPlayer());
             if (plugin.getCrossServerManager().isEnabled()) {

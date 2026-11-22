@@ -34,6 +34,11 @@ public class market implements cmd {
             return false;
 
         if (args.length == 0) {
+            if (plugin.getConfigManager().isResidenceGuiEnabled()) {
+                plugin.getMarketGui().openMarketBrowser((Player) sender, com.bekvon.bukkit.residence.gui.MarketGui.MarketFilter.ALL,
+                        com.bekvon.bukkit.residence.gui.MarketGui.MarketSort.PRICE_ASC, resadmin, 1);
+                return true;
+            }
             return false;
         }
 
@@ -48,8 +53,15 @@ public class market implements cmd {
 
         switch (args[0].toLowerCase()) {
 
+        case "gui": {
+            com.bekvon.bukkit.residence.gui.MarketGui.MarketFilter filter = args.length >= 2
+                    ? com.bekvon.bukkit.residence.gui.MarketGui.MarketFilter.parse(args[1])
+                    : com.bekvon.bukkit.residence.gui.MarketGui.MarketFilter.ALL;
+            plugin.getMarketGui().openMarketBrowser(player, filter, com.bekvon.bukkit.residence.gui.MarketGui.MarketSort.PRICE_ASC, resadmin, page);
+            return true;
+        }
         case "list":
-            return commandResMarketList(args, player, page);
+            return commandResMarketList(args, player, resadmin, page);
         case "autopay":
             return commandResMarketAutoPay(args, resadmin, player);
         case "payrent":
@@ -405,11 +417,28 @@ public class market implements cmd {
         return true;
     }
 
-    private boolean commandResMarketList(String[] args, Player player, int page) {
+    private boolean commandResMarketList(String[] args, Player player, boolean resadmin, int page) {
         if (!plugin.getConfigManager().enableEconomy()) {
             lm.Economy_MarketDisabled.sendMessage(player);
             return true;
         }
+
+        boolean forceText = false;
+        for (String arg : args) {
+            if (arg.equalsIgnoreCase("text")) {
+                forceText = true;
+                break;
+            }
+        }
+
+        if (!forceText && plugin.getConfigManager().isResidenceGuiEnabled() && plugin.getConfigManager().isResidenceGuiOpenOnListCommand()) {
+            com.bekvon.bukkit.residence.gui.MarketGui.MarketFilter filter = args.length >= 2
+                    ? com.bekvon.bukkit.residence.gui.MarketGui.MarketFilter.parse(args[1])
+                    : com.bekvon.bukkit.residence.gui.MarketGui.MarketFilter.ALL;
+            plugin.getMarketGui().openMarketBrowser(player, filter, com.bekvon.bukkit.residence.gui.MarketGui.MarketSort.PRICE_ASC, resadmin, page);
+            return true;
+        }
+
         lm.General_MarketList.sendMessage(player);
         if (args.length < 2)
             return false;
@@ -440,9 +469,13 @@ public class market implements cmd {
         c.get("Info.Info", Arrays.asList("&eUsage: &6/res market Info [residence]", "Shows if the Residence is for sale or for rent, and the cost."));
         LocaleManager.addTabCompleteSub(this, "Info", "[residence]");
 
+        c.get("gui.Description", "Open the interactive Residence Market GUI.");
+        c.get("gui.Info", Arrays.asList("&eUsage: &6/res market gui [all/sell/rent/myrent]"));
+        LocaleManager.addTabCompleteSub(this, "gui", "all%%sell%%rent%%myrent");
+
         c.get("list.Description", "Lists rentable and for sale residences.");
-        c.get("list.Info", Arrays.asList("&eUsage: &6/res market list [rent/sell]"));
-        LocaleManager.addTabCompleteSub(this, "list", "rent%%sell");
+        c.get("list.Info", Arrays.asList("&eUsage: &6/res market list [rent/sell] (text)"));
+        LocaleManager.addTabCompleteSub(this, "list", "rent%%sell", "text");
 
         c.get("list.SubCommands.rent.Description", "Lists rentable residences.");
         c.get("list.SubCommands.rent.Info", Arrays.asList("&eUsage: &6/res market list rent"));

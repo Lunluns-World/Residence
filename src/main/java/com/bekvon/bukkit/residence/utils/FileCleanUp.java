@@ -122,7 +122,12 @@ public class FileCleanUp {
 
                 if (plugin.getConfigManager().isAutoCleanTrasnferToUser()
                         && !res.getOwner().equalsIgnoreCase(plugin.getConfigManager().getAutoCleanUserName())) {
-                    res.getPermissions().setOwner(plugin.getConfigManager().getAutoCleanUserName(), true);
+                    String originalOwnerName = res.getOwner();
+                    if (plugin.getConfigManager().isAutoCleanRestoreOnReturn() && plugin.getCleanupReclaimManager() != null) {
+                        plugin.getCleanupReclaimManager().recordArchived(res, ownerUuid, originalOwnerName);
+                    }
+                    boolean resetFlags = !plugin.getConfigManager().isAutoCleanKeepFlags();
+                    res.getPermissions().setOwner(plugin.getConfigManager().getAutoCleanUserName(), resetFlags);
                     if (plugin.getRentManager().isForRent(res))
                         plugin.getRentManager().removeRentable(res);
                     if (plugin.getTransactionManager().isForSale(res))
