@@ -344,6 +344,16 @@ public class DatabaseStorageManager {
                     + "override_rents INT NULL,"
                     + "updated_at BIGINT NOT NULL"
                     + ")");
+
+            st.executeUpdate("CREATE TABLE IF NOT EXISTS " + tablePrefix + "cleanup_reclaim ("
+                    + "server_name VARCHAR(64) NOT NULL,"
+                    + "res_key VARCHAR(128) NOT NULL,"
+                    + "res_name VARCHAR(128) NOT NULL,"
+                    + "original_owner_uuid VARCHAR(36) NOT NULL,"
+                    + "original_owner_name VARCHAR(64) NOT NULL,"
+                    + "archived_at BIGINT NOT NULL,"
+                    + "PRIMARY KEY (server_name, res_key)"
+                    + ")");
         }
     }
 
@@ -1243,6 +1253,108 @@ public class DatabaseStorageManager {
             }
         }
         return remaining;
+    }
+
+    public void upsertCleanupReclaim(CleanupReclaimManager.ReclaimEntry entry) throws SQLException {
+        if (entry == null || entry.getOriginalOwnerUuid() == null)
+            return;
+        String srv = normalizeServerKey(entry.getServerName());
+        String key = entry.getResKey().toLowerCase();
+        String name = entry.getResName().length() > 128 ? entry.getResName().substring(0, 128) : entry.getResName();
+        String ownerName = entry.getOriginalOwnerName().length() > 64 ? entry.getOriginalOwnerName().substring(0, 64) : entry.getOriginalOwnerName();
+        String sql;
+        if (storageType == StorageType.MYSQL || storageType == StorageType.MARIADB) {
+            sql = "INSERT INTO " + tablePrefix + "cleanup_reclaim (server_name, res_key, res_name, original_owner_uuid, original_owner_name, archived_at) "
+                    + "VALUES (?, ?, ?, ?, ?, ?) "
+                    + "ON DUPLICATE KEY UPDATE res_name = VALUES(res_name), original_owner_uuid = VALUES(original_owner_uuid), "
+                    + "original_owner_name = VALUES(original_owner_name), archived_at = VALUES(archived_at)";
+        } else {
+            sql = "INSERT INTO " + tablePrefix + "cleanup_reclaim (server_name, res_key, res_name, original_owner_uuid, original_owner_name, archived_at) "
+                    + "VALUES (?, ?, ?, ?, ?, ?) "
+                    + "ON CONFLICT (server_name, res_key) DO UPDATE SET res_name = excluded.res_name, "
+                    + "original_owner_uuid = excluded.original_owner_uuid, original_owner_name = excluded.original_owner_name, "
+                    + "archived_at = excluded.archived_at";
+        }
+        synchronized (sqliteWriteLock) {
+            try (Connection conn = openConnection(); PreparedStatement ps = conn.prepareStatement(sql)) {
+                ps.setString(1, srv);
+                ps.setString(2, key);
+                ps.setString(3, name);
+                ps.setString(4, entry.getOriginalOwnerUuid().toString());
+                ps.setString(5, ownerName);
+                ps.setLong(6, entry.getArchivedAt());
+                ps.executeUpdate();
+            }
+        }
+    }
+
+    public List<CleanupReclaimManager.ReclaimEntry> loadCleanupReclaimsForPlayer(String serverName, UUID ownerUuid) throws SQLException {
+        List<CleanupReclaimManager.ReclaimEntry> list = new ArrayList<>();
+        if (ownerUuid == null)
+            return list;
+        String srv = normalizeServerKey(serverName);
+        String sql = "SELECT server_name, res_key, res_name, original_owner_uuid, original_owner_name, archived_at "
+                + "FROM " + tablePrefix + "cleanup_reclaim WHERE server_name = ? AND original_owner_uuid = ?";
+        try (Connection conn = openConnection(); PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, srv);
+            ps.setString(2, ownerUuid.toString());
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    UUID uuid = parseUuid(rs.getString("original_owner_uuid"));
+                    if (uuid != null) {
+                        list.add(new CleanupReclaimManager.ReclaimEntry(
+                                rs.getString("server_name"),
+                                rs.getString("res_key"),
+                                rs.getString("res_name"),
+                                uuid,
+                                rs.getString("original_owner_name"),
+                                rs.getLong("archived_at")));
+                    }
+                }
+            }
+        }
+        return list;
+    }
+
+    public List<CleanupReclaimManager.ReclaimEntry> loadReturningCleanupReclaims(String serverName) throws SQLException {
+        List<CleanupReclaimManager.ReclaimEntry> list = new ArrayList<>();
+        String srv = normalizeServerKey(serverName);
+        String sql = "SELECT r.server_name, r.res_key, r.res_name, r.original_owner_uuid, r.original_owner_name, r.archived_at "
+                + "FROM " + tablePrefix + "cleanup_reclaim r "
+                + "INNER JOIN " + tablePrefix + "player_activity a ON a.player_uuid = r.original_owner_uuid "
+                + "WHERE r.server_name = ? AND a.last_seen > r.archived_at";
+        try (Connection conn = openConnection(); PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, srv);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    UUID uuid = parseUuid(rs.getString("original_owner_uuid"));
+                    if (uuid != null) {
+                        list.add(new CleanupReclaimManager.ReclaimEntry(
+                                rs.getString("server_name"),
+                                rs.getString("res_key"),
+                                rs.getString("res_name"),
+                                uuid,
+                                rs.getString("original_owner_name"),
+                                rs.getLong("archived_at")));
+                    }
+                }
+            }
+        }
+        return list;
+    }
+
+    public void deleteCleanupReclaim(String serverName, String resKey) throws SQLException {
+        if (resKey == null)
+            return;
+        String srv = normalizeServerKey(serverName);
+        String sql = "DELETE FROM " + tablePrefix + "cleanup_reclaim WHERE server_name = ? AND res_key = ?";
+        synchronized (sqliteWriteLock) {
+            try (Connection conn = openConnection(); PreparedStatement ps = conn.prepareStatement(sql)) {
+                ps.setString(1, srv);
+                ps.setString(2, resKey.toLowerCase());
+                ps.executeUpdate();
+            }
+        }
     }
 
     private static UUID parseUuid(String raw) {

@@ -1742,7 +1742,8 @@ public class ResidenceManager implements ResidenceInterface {
             }
         }
 
-        if (!res.getPermissions().setOwner(giveplayer.getUniqueId(), true, () -> true, resadmin ? null : reqPlayer))
+        boolean resetFlags = !plugin.getConfigManager().isKeepFlagsOnOwnerTransfer();
+        if (!res.getPermissions().setOwner(giveplayer.getUniqueId(), resetFlags, () -> true, resadmin ? null : reqPlayer))
             return;
         // Fix phrases here
         lm.Residence_Give.sendMessage(reqPlayer, residence, giveplayer.getName());

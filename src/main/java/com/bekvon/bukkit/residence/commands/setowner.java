@@ -27,9 +27,13 @@ public class setowner implements cmd {
             return true;
         }
 
-        boolean keepFlags = false;
-        if (args.length > 2 && args[2].equalsIgnoreCase("-keepflags"))
-            keepFlags = true;
+        boolean keepFlags = plugin.getConfigManager().isKeepFlagsOnOwnerTransfer();
+        if (args.length > 2) {
+            if (args[2].equalsIgnoreCase("-keepflags"))
+                keepFlags = true;
+            else if (args[2].equalsIgnoreCase("-resetflags"))
+                keepFlags = false;
+        }
 
         ClaimedResidence area = plugin.getResidenceManager().getByName(args[0]);
 
@@ -52,9 +56,6 @@ public class setowner implements cmd {
             plugin.getRentManager().removeRentable(area);
         if (plugin.getTransactionManager().isForSale(area))
             plugin.getTransactionManager().removeFromSale(area);
-
-        if (!keepFlags)
-            area.getPermissions().applyDefaultFlags();
 
         plugin.getSignUtil().updateSignResName(area);
 

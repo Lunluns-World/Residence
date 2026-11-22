@@ -244,6 +244,7 @@ public class Residence extends JavaPlugin {
     private CrossServerManager crossServerManager = null;
     private ResidenceGuiMetaManager guiMetaManager = null;
     private com.bekvon.bukkit.residence.storage.PlayerLimitManager playerLimitManager = null;
+    private com.bekvon.bukkit.residence.storage.CleanupReclaimManager cleanupReclaimManager = null;
     private ResidenceListGui residenceListGui = null;
 
     public DatabaseStorageManager getDatabaseStorageManager() {
@@ -408,6 +409,9 @@ public class Residence extends JavaPlugin {
                 }
                 if (playerLimitManager != null && (databaseStorageManager == null || !databaseStorageManager.isInitialized())) {
                     playerLimitManager.saveYaml();
+                }
+                if (cleanupReclaimManager != null && (databaseStorageManager == null || !databaseStorageManager.isInitialized())) {
+                    cleanupReclaimManager.saveYaml();
                 }
                 if (zip != null)
                     zip.backup();
@@ -636,6 +640,7 @@ public class Residence extends JavaPlugin {
 
             getGuiMetaManager().load();
             getPlayerLimitManager().load();
+            getCleanupReclaimManager().load();
             if (getCrossServerManager().isEnabled()) {
                 databaseStorageManager.syncLocalServerIndex(getStorageServerName(), getCrossServerManager().buildLocalEntriesSnapshot());
                 databaseStorageManager.clearResidenceReservations(getStorageServerName());
@@ -651,6 +656,9 @@ public class Residence extends JavaPlugin {
                 (new FileCleanUp(this)).cleanOldResidence();
             } else if (databaseStorageManager != null && databaseStorageManager.isInitialized()) {
                 getCrossServerManager().seedLocalPlayerActivityAsync();
+            }
+            if (getConfigManager().isAutoCleanRestoreOnReturn() && databaseStorageManager != null && databaseStorageManager.isInitialized()) {
+                getCleanupReclaimManager().reconcileCrossServerReturnsAsync();
             }
 
             if (firstenable) {
@@ -1098,6 +1106,12 @@ public class Residence extends JavaPlugin {
         return playerLimitManager;
     }
 
+    public com.bekvon.bukkit.residence.storage.CleanupReclaimManager getCleanupReclaimManager() {
+        if (cleanupReclaimManager == null)
+            cleanupReclaimManager = new com.bekvon.bukkit.residence.storage.CleanupReclaimManager(this);
+        return cleanupReclaimManager;
+    }
+
     public void reloadDatabaseAndCrossServer() {
         if (crossServerManager != null) {
             crossServerManager.flushOnlinePlayerActivityNow();
@@ -1108,6 +1122,9 @@ public class Residence extends JavaPlugin {
         }
         if (playerLimitManager != null) {
             playerLimitManager.load();
+        }
+        if (cleanupReclaimManager != null) {
+            cleanupReclaimManager.load();
         }
         getCrossServerManager().start();
     }

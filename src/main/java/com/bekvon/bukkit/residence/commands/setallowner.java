@@ -30,9 +30,13 @@ public class setallowner implements cmd {
         String oldOwner = args[0];
         String newOwner = args[1];
 
-        boolean keepFlags = false;
-        if (args.length > 2 && args[2].equalsIgnoreCase("-keepflags"))
-            keepFlags = true;
+        boolean keepFlags = plugin.getConfigManager().isKeepFlagsOnOwnerTransfer();
+        if (args.length > 2) {
+            if (args[2].equalsIgnoreCase("-keepflags"))
+                keepFlags = true;
+            else if (args[2].equalsIgnoreCase("-resetflags"))
+                keepFlags = false;
+        }
 
         if (!plugin.getPlayerManager().isPlayerExist(sender, newOwner, true)) {
             return null;
@@ -77,9 +81,6 @@ public class setallowner implements cmd {
                     plugin.getRentManager().removeRentable(area);
                 if (plugin.getTransactionManager().isForSale(area))
                     plugin.getTransactionManager().removeFromSale(area);
-
-                if (!keepFlags)
-                    area.getPermissions().applyDefaultFlags();
 
                 plugin.getSignUtil().updateSignResName(area);
                 counts[0]++;

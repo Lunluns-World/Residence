@@ -226,6 +226,9 @@ public class ConfigManager {
 
     private boolean AutoCleanTrasnferToUser;
     private String AutoCleanUserName;
+    private boolean autoCleanKeepFlags = true;
+    private boolean autoCleanRestoreOnReturn = true;
+    private boolean keepFlagsOnOwnerTransfer = true;
     protected List<String> NoPlaceWorlds;
     protected List<String> BlockFallWorlds;
     protected List<String> CleanWorlds;
@@ -929,6 +932,15 @@ public class ConfigManager {
 
         c.addComment("Global.AutoCleanUp.UserName", "Name of the user which receives removed residence");
         AutoCleanUserName = c.get("Global.AutoCleanUp.UserName", "Server_Land");
+
+        c.addComment("Global.AutoCleanUp.KeepFlagsOnTransfer", "When true, preserves all existing residence and player flags when transferring an inactive residence to AutoCleanUp.UserName");
+        autoCleanKeepFlags = c.get("Global.AutoCleanUp.KeepFlagsOnTransfer", true);
+
+        c.addComment("Global.AutoCleanUp.AutoRestoreOnReturn", "When true (with TrasnferToUser enabled), automatically restores ownership with original flags if the previous owner returns and logs in");
+        autoCleanRestoreOnReturn = c.get("Global.AutoCleanUp.AutoRestoreOnReturn", true);
+
+        c.addComment("Global.Optimizations.KeepFlagsOnOwnerTransfer", "When true, preserves existing residence flags by default when changing owner via /res give, /resadmin setowner, or /resadmin setallowner");
+        keepFlagsOnOwnerTransfer = c.get("Global.Optimizations.KeepFlagsOnOwnerTransfer", true);
 
         if (Version.isCurrentEqualOrHigher(Version.v1_13_R1)) {
             LwcMatList.clear();
@@ -2265,6 +2277,18 @@ public class ConfigManager {
 
     public String getAutoCleanUserName() {
         return AutoCleanUserName;
+    }
+
+    public boolean isAutoCleanKeepFlags() {
+        return autoCleanKeepFlags;
+    }
+
+    public boolean isAutoCleanRestoreOnReturn() {
+        return autoCleanRestoreOnReturn;
+    }
+
+    public boolean isKeepFlagsOnOwnerTransfer() {
+        return keepFlagsOnOwnerTransfer;
     }
 
     public boolean isDisableResidenceCreation() {
