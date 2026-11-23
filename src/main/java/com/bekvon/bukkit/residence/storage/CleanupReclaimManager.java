@@ -121,6 +121,14 @@ public class CleanupReclaimManager {
         cacheByServerKey.clear();
         if (isDatabaseReady()) {
             refreshCacheFromDatabaseNow();
+            com.bekvon.bukkit.residence.crossserver.RedisSyncBus bus = plugin.getRedisSyncBus();
+            if (bus != null) {
+                bus.addListener((topic, payload) -> {
+                    if (com.bekvon.bukkit.residence.crossserver.RedisSyncBus.TOPIC_CLEANUP_RECLAIM.equals(topic)) {
+                        reconcileCrossServerReturnsAsync();
+                    }
+                });
+            }
         } else {
             loadYaml();
             for (ReclaimEntry entry : yamlEntries.values()) {
@@ -313,6 +321,10 @@ public class CleanupReclaimManager {
                 toDelete.add(entry);
                 continue;
             }
+            // 若領地正處於進行中／中止中／結標中的拍賣，交由 AuctionManager 統一處理退款與還原，避免競態重複歸還
+            if (plugin.getAuctionManager() != null && plugin.getAuctionManager().isResidenceBlockedForReclaim(res.getUniqueId())) {
+                continue;
+            }
             // Restore ownership WITHOUT resetting flags (preserves all custom flags & player trust)
             boolean changed = res.getPermissions().setOwner(entry.getOriginalOwnerUuid(), false);
             if (changed) {
@@ -381,6 +393,24 @@ public class CleanupReclaimManager {
 
     public List<ReclaimEntry> getLocalYamlSnapshot() {
         return Collections.unmodifiableList(new ArrayList<>(yamlEntries.values()));
+    }
+
+    /**
+     * 供拍賣系統於保管領地結標移轉或中止歸還後移除對應保管紀錄，避免重複歸還。
+     */
+    public void removeArchivedRecord(ClaimedResidence res) {
+        if (res == null || res.getName() == null) {
+            return;
+        }
+        ReclaimEntry existing = getArchivedEntry(res);
+        if (existing != null) {
+            deleteEntriesAsync(Collections.singletonList(existing));
+        } else {
+            String srv = plugin.getStorageServerName();
+            String key = res.getName().toLowerCase(Locale.ROOT);
+            ReclaimEntry synthetic = new ReclaimEntry(srv, key, res.getName(), res.getUniqueId(), null, "", 0L);
+            deleteEntriesAsync(Collections.singletonList(synthetic));
+        }
     }
 
     private void loadYaml() {

@@ -100,6 +100,11 @@ public class TransactionManager implements MarketBuyInterface {
             return;
         }
 
+        if (plugin.isResidenceInAuction(res)) {
+            lm.Auction_ResidenceFrozen.sendMessage(player);
+            return;
+        }
+
         if (plugin.getConfigManager().enabledRentSystem()) {
             if (!resadmin) {
                 if (res.isForRent()) {

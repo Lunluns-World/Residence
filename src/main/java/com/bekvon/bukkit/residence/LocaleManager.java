@@ -199,8 +199,12 @@ public class LocaleManager {
                 path + "flags.SubCommands",
                 "Language.Gui",
                 "Language.Residence",
+                "Language.Auction",
+                "Language.Cleanup",
                 path + "gui",
-                path + "migrate"
+                path + "migrate",
+                path + "auction",
+                path + "cleanup"
         };
         try (InputStream resource = plugin.getResource("Language/" + language + ".yml")) {
             if (resource == null)

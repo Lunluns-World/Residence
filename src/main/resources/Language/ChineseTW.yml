@@ -522,6 +522,14 @@ Language:
       DeleteLore:
       - '&7永久刪除此領地。'
       - '&c點擊後會先開啟二次確認介面。'
+      AuctionStartName: '&6發起領地拍賣'
+      AuctionStartLore:
+      - '&7將此領地上架進行喊價拍賣。'
+      - '&e點擊後會先開啟拍賣條款同意頁。'
+      AuctionActiveName: '&e拍賣進行中'
+      AuctionActiveLore:
+      - '&7此領地目前正處於拍賣凍結狀態。'
+      - '&e點擊查看即時出價與管理選項。'
     Subzones:
       Title: '&3子領地清單：&f%1 &8(%2/%3)'
       EmptyName: '&7目前沒有子領地'
@@ -585,6 +593,282 @@ Language:
       DescUpdated: '&a已將領地 &e%1 &a的簡介更新為：&f%2'
       VisibilityUpdated: '&a領地 &e%1 &a在 GUI 中的狀態已切換為 %2&a。'
       RemoteInfo: '&6[%1] &e%2 &7| 擁有者：&f%3 &7| 世界：&f%4 &8(%5, %6, %7)'
+    Auction:
+      BrowserTitle: '&6領地拍賣場 - %1 &8(%2/%3)'
+      Filter:
+        All: 全部拍賣
+        Archived: 保管／管理員拍賣
+        Player: 玩家拍賣
+        Participated: 我參與的
+      Sort:
+        EndingSoon: 即將結標
+        PriceAsc: 價格低→高
+        PriceDesc: 價格高→低
+      EmptyName: '&7目前沒有符合條件的拍賣'
+      EmptyLore:
+      - '&7切換下方分類，或等待其他領地上架拍賣。'
+      - '&7領主可在 &e/res gui &7管理領地中發起拍賣。'
+      Btn:
+        OpenName: '&6領地拍賣場'
+        OpenLore:
+        - '&7點擊瀏覽並參與領地喊價拍賣'
+        - '&8也可直接輸入 /res auction'
+        FilterName: '&e分類篩選：&6%1'
+        FilterLore:
+        - '&7點擊切換顯示分類'
+        - '&8(全部拍賣 / 保管拍賣 / 玩家拍賣 / 我參與的)'
+        SortName: '&e排序方式：&6%1'
+        SortLore:
+        - '&7點擊切換排序方式'
+        - '&8(即將結標 / 價格低→高 / 價格高→低)'
+        NotifyName: '&e待確認通知 &7(%1)'
+        NotifyLore:
+        - '&7檢視得標、售出、退費與中止等通知。'
+        - '&7點擊通知標記「我知道了」。'
+        BackResGuiName: '&a返回領地瀏覽介面'
+        BackResGuiLore:
+        - '&7點擊切換回 /res gui 領地清單。'
+        BackBrowserName: '&7返回拍賣清單'
+        RefreshName: '&a重新整理拍賣'
+        RefreshLore:
+        - '&7重新載入最新出價與倒數時間。'
+        MarketName: '&a前往領地市場'
+        MarketLore:
+        - '&7切換至固定價格出售／出租市場介面。'
+      Card:
+        Type: '&7類型：&f%1'
+        Server: '&7位置：&b%1 &8/ &f%2'
+        Seller: '&7賣方：&f%1'
+        OriginalOwner: '&7原領地主：&f%1'
+        StartPrice: '&7起標價：&6%1 &8(尚無人出價)'
+        CurrentBid: '&7目前最高價：&6%1 &8(&e%2&8)'
+        MinIncrement: '&7最低加價：&f%1 &8| &7出價次數：&f%2'
+        Remaining: '&7剩餘時間：&e%1'
+        ClearMode: '&7交付方式：&f%1'
+        LeftBid: '&e左鍵點擊：&f查看詳情與喊價'
+        RightTp: '&e右鍵點擊：&b傳送看房'
+      Terms:
+        Title: '&4拍賣條款同意：&f%1'
+        InfoName: '&e開拍規則與條款 - %1'
+        RuleFreeze: '&71. &c拍賣期間領地全面凍結 &7（僅開放進入與傳送看房）。'
+        RuleQuickShop: '&72. &c領地內 QuickShop 商店全面鎖定 &7（禁止交易／新建／刪除）。'
+        RuleNoCancel: '&73. &e一旦有人喊價，賣方即不得取消拍賣。'
+        RuleFeeAndFlags: '&74. &e成交將扣除 %1% 手續費，並清除領地與子領地全部權限。'
+        RuleCooldown: '&75. &7取消或流標後同一領地重上架需冷卻 &f%1 小時&7。'
+        RuleAsIs: '&76. &a領地將採原況交付（建築與容器物品保留給得標者）。'
+        RuleAdminClear: '&76. &6管理員拍賣：可於下一頁設定成交清空模式。'
+        AgreeName: '&a&l我已知曉並同意上述條款'
+        AgreeLore:
+        - '&7點擊確認已閱讀並同意所有拍賣規範，'
+        - '&7接著進入拍賣參數設定頁面。'
+        CancelName: '&c&l不同意並返回'
+        CancelLore:
+        - '&7取消開拍並回到上一頁。'
+      Create:
+        Title: '&6建立領地拍賣：&f%1'
+        StartPriceName: '&e起標價：&6%1'
+        MinIncName: '&e每次最低加價：&6%1'
+        MinAllowed: '&7系統下限：&f%1'
+        ClickChatInput: '&e左鍵點擊：&7於聊天欄輸入金額'
+        RightClickStep: '&e右鍵點擊：&a%1'
+        DurationName: '&e拍賣時長：&f%1'
+        DurationRange: '&7允許範圍：&f%1 分鐘 &7～ &f%2 小時'
+        DurationLeftPreset: '&e左鍵點擊：&7切換常用時長預設'
+        DurationRightChat: '&e右鍵點擊：&7於聊天欄輸入小時數'
+        DescName: '&e拍賣說明文字'
+        DescLeft: '&e左鍵點擊：&7於聊天欄輸入簡介'
+        DescRight: '&e右鍵點擊：&7清除簡介'
+        ClearModeName: '&e成交清空模式：&6%1'
+        ClearModeLore:
+        - '&7管理員專屬設定（僅於確定成交時執行）：'
+        - '&8- 現況交付（不清除）'
+        - '&8- 僅清除物品與 QuickShop 商店'
+        - '&8- 連同建築與物品一起清除'
+        - '&e點擊切換清空模式'
+        PlayerAsIsLore:
+        - '&7玩家拍賣固定採用原況交付。'
+        - '&8建築與物品將完整保留給得標者。'
+        ConfirmName: '&a&l確認上架開始拍賣'
+        SummaryPrice: '&7起標：&6%1 &8| &7最低加價：&6%2'
+        SummaryDuration: '&7拍賣時長：&f%1'
+        SummaryClearMode: '&7交付方式：&f%1'
+      Detail:
+        Title: '&6拍賣 #%1：&f%2'
+        RecentBidsHeader: '&6最近出價紀錄：'
+        RecentBidLine: '&7- &e%1 &7：&6%2'
+        BidMinName: '&a最低有效出價：&6%1'
+        BidQuickName: '&e快速加碼出價：&6%1'
+        BidClickLore:
+        - '&7點擊進入出價二次確認畫面。'
+        CustomBidName: '&b自訂喊價金額'
+        CustomBidMin: '&7目前最低需出價：&6%1'
+        CustomBidLore: '&e點擊後於聊天欄輸入想喊的金額。'
+        TpName: '&b傳送看房'
+        TpLore:
+        - '&7點擊傳送到此領地實地查看。'
+        SetIncName: '&e修改最低加價 (&6%1&e)'
+        SetIncLore:
+        - '&7僅套用於之後的新喊價。'
+        - '&e點擊後於聊天欄輸入新金額。'
+        CancelName: '&c取消此拍賣'
+        CancelOwnerLore:
+        - '&7僅限尚未有人出價時才可取消。'
+        - '&c取消後該領地將進入重上架冷卻。'
+        CancelAdminLore:
+        - '&c管理員強制取消：將立即全額退還目前最高出價者。'
+      BidConfirm:
+        Title: '&4確認喊價：&f%1'
+        SummaryName: '&6拍賣 #%1 - %2'
+        YourBid: '&7本次喊價金額：&6&l%1'
+        CurrentBid: '&7目前價格：&e%1'
+        ClearMode: '&7成交交付方式：&f%1'
+        WarnFlags: '&c提醒：成交後所有領地與子領地權限將清除，請自行重新設定。'
+        WarnAsIs: '&e領地採原況交付，不保證內部建築與物品內容。'
+        WarnWillClear: '&c注意：成交後系統將執行「&e%1&c」。'
+        ConfirmName: '&a&l確認出價 (%1)'
+        ConfirmLore:
+        - '&7確認後將立即扣除遊戲幣。'
+        - '&7若後續被超車將自動全額退款。'
+        CancelName: '&c&l取消返回'
+        CancelLore:
+        - '&7不送出本次喊價。'
+      Notify:
+        Title: '&6拍賣通知中心 &8(未讀 %1 筆)'
+        EmptyName: '&a目前沒有待確認通知'
+        EmptyLore:
+        - '&7所有拍賣通知皆已閱讀完畢。'
+        ClickAck: '&a點擊標記：&f我知道了'
+        AckAllName: '&a全部標記為「我知道了」'
+        AckAllLore:
+        - '&7一次確認所有未讀拍賣通知。'
+  Auction:
+    Disabled: '&c領地拍賣系統未啟用，或尚未啟用資料庫與經濟系統。'
+    DbError: '&c拍賣資料庫處理發生錯誤，請稍後再試。'
+    NotFound: '&c找不到編號 #%1 的拍賣。'
+    TopLevelOnly: '&c僅頂層主領地可發起拍賣（子領地將隨主領地一併移轉）。'
+    AlreadyActive: '&c領地 &e%1 &c已經有進行中的拍賣。'
+    CannotAuctionServerLand: '&c系統領地 Server_Land 不可拍賣。'
+    ArchivedAdminOnly: '&c保管中領地僅限管理員開啟拍賣。'
+    ConflictForSale: '&c無法開拍：領地 &e%1 &c目前處於固定價出售狀態。'
+    ConflictRent: '&c無法開拍：領地 &e%1 &c目前處於待租或出租狀態。'
+    ConflictThirdPartySubzone: '&c無法開拍：子領地 &e%1 &c屬於第三方玩家，無法整併拍賣。'
+    ResidenceFrozen: '&c此領地目前正處於拍賣凍結狀態，禁止變更或刪除。'
+    CreatedSuccess: '&a成功開啟拍賣 &e#%1&a（領地 &e%2&a，起標價 &6%3&a）！'
+    BidSuccess: '&a已成功對領地 &e%1 &a出價 &6%2&a！'
+    CancelSuccess: '&a已取消拍賣 &e#%1 &a（&e%2&a）。'
+    IncrementUpdated: '&a已將拍賣 &e#%1 &a的最低加價金額更新為 &6%2&a。'
+    Type:
+      Player: '&a玩家拍賣'
+      Archived: '&d保管領地拍賣'
+      Admin: '&c管理員拍賣'
+    ClearMode:
+      None: '&a現況交付（不清除）'
+      ItemsOnly: '&e僅清除物品與商店'
+      All: '&c清除建築與物品'
+    Time:
+      Ended: '&c已結標'
+      DaysHours: '%1 天 %2 小時'
+      HoursMins: '%1 小時 %2 分'
+      MinsSecs: '%1 分 %2 秒'
+      Secs: '%1 秒'
+    Err:
+      NotActive: '&c該拍賣已結束或已取消。'
+      Ended: '&c該拍賣時間已截止。'
+      OwnAuction: '&c你不能對自己發起的拍賣喊價。'
+      OriginalOwnerCannotBid: '&c原領地主不可參與自己保管領地的拍賣（登入即自動歸還）。'
+      StaffCannotBid: '&c管理人員不得參與保管領地或管理員拍賣競標。'
+      AlreadyHighest: '&c你目前已經是最高出價者，無須重複加價。'
+      BidTooLow: '&c出價過低！目前最低有效喊價為 &6%1&c。'
+      InsufficientBalance: '&c餘額不足！本次喊價需要至少 &6%1&c。'
+      StartPriceTooLow: '&c起標價過低！系統規定最低起標價為 &6%1&c。'
+      InvalidIncrement: '&c最低加價金額至少需為 1。'
+      DurationTooShort: '&c拍賣時長過短！最短需為 &e%1 &c分鐘。'
+      DurationTooLong: '&c拍賣時長過長！最長不可超過 &e%1 &c小時。'
+      ClearModeAdminOnly: '&c僅管理員可設定成交清空模式，玩家拍賣固定為原況交付。'
+      MaxActiveReached: '&c你同時進行中的拍賣已達上限（最多 &e%1 &c場）。'
+      RelistCooldown: '&c此領地仍在重上架冷卻期間，尚須等待 &e%1&c。'
+      CannotCancelAfterBid: '&c已有玩家出價，賣方無法取消此拍賣。'
+      NotAuthorizedOrInactive: '&c你沒有權限操作，或該拍賣已結束。'
+    Broadcast:
+      Created: '&6[領地拍賣] &e#%1 &f%2 &7(%3) &a開始拍賣！起標價 &6%4 &7| 剩餘 &e%5 &8(/res auction)'
+      Bid: '&6[領地拍賣] &e#%1 &f%2 &7- &b%3 &a喊價 &6%4&a！'
+      BidExtended: '&6[領地拍賣] &e#%1 &f%2 &7- &b%3 &a喊價 &6%4 &e（尾盤延時 +%5 秒）！'
+      Cancelled: '&6[領地拍賣] &e#%1 &f%2 &c已由 &e%3 &c取消拍賣。'
+      Aborted: '&6[領地拍賣] &e#%1 &f%2 &e因原領地主 &f%3 &e回歸已中止拍賣並歸還！'
+      NoBid: '&6[領地拍賣] &e#%1 &f%2 &7無人出價，已流標。'
+      Settled: '&6[領地拍賣] &e#%1 &f%2 &a由 &b%3 &a以 &6%4 &a得標成交！'
+    Notify:
+      LoginReminder: '&6[領地拍賣] &e你有 &c%1 &e筆待確認的拍賣通知，請輸入 &6/res auction ack &e檢視並點擊「我知道了」。'
+      ClickToAckHint: '&7輸入 &6/res auction ack &7開啟通知介面點擊「我知道了」。'
+      AckAllDone: '&a已將所有拍賣通知標記為「我知道了」。'
+      OutbidTitle: '出價被超車：%1'
+      OutbidMessage: '&e你在領地 &f%1 &e的出價已被 &b%2 &e（&6%3&e）超越，你的 &6%4 &e已自動退還。'
+      WonTitle: '得標通知：%1'
+      WonMessage: '&a恭喜得標領地 &f%1&a（&b%2 &7%3&a），成交價 &6%4&a！領地已直接移轉給你，所有權限已清空請重新設定。'
+      SoldTitle: '售出入帳通知：%1'
+      SoldMessage: '&a領地 &f%1 &a已由 &b%2 &a以 &6%3 &a得標（手續費 %4，實收 &6%5 &a已直接入帳）。'
+      NoBidTitle: '流標通知：%1'
+      NoBidMessage: '&7領地 &f%1 &7拍賣時間結束且無人喊價，原權限已完整還原。'
+      CancelledTitle: '拍賣取消通知：%1'
+      CancelledMessage: '&c領地 &f%1 &c的拍賣已由 &e%2 &c取消，若有出價已全額退還。'
+      AbortedOwnerTitle: '保管領地已自動歸還：%1'
+      AbortedOwnerMessage: '&a歡迎回歸！你的保管領地 &f%1 &a之拍賣已立即中止，領地與原權限已完整歸還。'
+      AbortedBidderTitle: '拍賣中止退費：%1'
+      AbortedBidderMessage: '&e領地 &f%1 &e因原領地主 &f%2 &e回歸而中止拍賣，你的出價已自動全額退還。'
+    Prompt:
+      StartPrice: '&a請於聊天欄輸入起標價（最低 &6%1&a）：'
+      MinIncrement: '&a請於聊天欄輸入每次最低加價金額：'
+      DurationHours: '&a請於聊天欄輸入拍賣時長（單位：小時，允許 &e%1 分鐘 &a～ &e%2 小時&a）：'
+      Description: '&a請於聊天欄輸入拍賣簡短說明：'
+      CustomBid: '&a請於聊天欄輸入你想喊的金額（目前最低需 &6%1&a）：'
+      CancelHint: '&7輸入 &ccancel &7或「取消」可放棄輸入。'
+      Cancelled: '&e已取消輸入。'
+    Info:
+      Header: '&6=== 拍賣 #%1：&f%2 &6==='
+    Bids:
+      Header: '&6=== 拍賣 #%1 出價紀錄（共 %2 筆）==='
+    Payouts:
+      Header: '&6=== 近期拍賣出款 Outbox 紀錄（共 %1 筆）==='
+    Discord:
+      CreatedTitle: '新領地拍賣上架 #%1 - %2'
+      CreatedDesc: '上架者：%1'
+      BidTitle: '領地拍賣新出價 #%1 - %2'
+      BidDesc: '%1 喊價 %2'
+      BidExtendedDesc: '觸發防尾盤狙擊！結束時間自動延長 %1 秒。'
+      CancelledTitle: '領地拍賣已取消 #%1 - %2'
+      CancelledDesc: '該拍賣已取消，如有出價已自動退還。'
+      AbortedTitle: '保管拍賣已中止 #%1 - %2'
+      AbortedDesc: '原領地主 %1 回歸，領地已原樣歸還並退還最高出價者。'
+      NoBidTitle: '領地拍賣流標 #%1 - %2'
+      NoBidDesc: '拍賣截止前無人出價，領地權限已還原。'
+      SettledTitle: '領地拍賣成交 #%1 - %2'
+      SettledDesc: '由 %1 以 %2 得標成交！'
+      FieldResidence: 領地名稱
+      FieldType: 拍賣類型
+      FieldStartPrice: 起標價
+      FieldMinIncrement: 最低加價
+      FieldClearMode: 交付方式
+      FieldDuration: 拍賣時長
+      FieldBidder: 出價玩家
+      FieldCurrentBid: 目前最高價
+      FieldRemaining: 剩餘時間
+      FieldOperator: 操作者
+      FieldOriginalOwner: 原領地主
+      FieldWinner: 得標者
+      FieldFinalPrice: 成交金額
+  Cleanup:
+    Import:
+      DbRequired: '&c匯入玩家最後上線時間需要啟用資料庫儲存（SQLite / MariaDB / PostgreSQL）。'
+      Started: '&e正在掃描缺少最後上線時間的領地擁有者（來源：&6%1&e）%2...'
+      DryRunTag: ' &b[預覽模式]'
+      Failed: '&c匯入外部上線紀錄失敗：%1'
+      Header: '&6=== 領地擁有者最後上線時間補齊報告%1 &6==='
+      Providers: '&7外部來源狀態 -> Plan：%1 &7| HuskSync：%2'
+      Summary: '&7掃描缺漏人數：&f%1 &8| &a成功補齊：&f%2 &7（Plan：&a%3&7，HuskSync：&b%4&7）&8| &e仍查無紀錄：&c%5'
+      ImportedLine: '&a+ &f%1 &8[%2] &7最後上線 &e%3 &8(%4 天前) &7- %5'
+      StillUnknownHeader: '&e兩邊皆查無紀錄的玩家（共 %1 位）：'
+      StillUnknownLine: '&c- &f%1 &8(%2) &7- %3'
+      MoreLines: '&8... 其餘還有 %1 筆未顯示。'
   InformationPage:
     Top: '&e___/ &a %1 - %2 &e \___'
     TopSingle: '&e___/ &a %1 &e \___'
@@ -1341,6 +1625,12 @@ CommandHelp:
               Info:
               - '&e用法：&6/res set <領地名稱> quickshop-trade true/false/remove'
               - '&e個人設定：&6/res pset <領地名稱> <玩家> quickshop-trade true/false/remove'
+            quickshop-remove:
+              Translated: 移除 QuickShop 商店 (quickshop-remove)
+              Description: 允許玩家移除領地內的 QuickShop 商店（僅允許移除動作，不包含修改或存取庫存）。
+              Info:
+              - '&e用法：&6/res set <領地名稱> quickshop-remove true/false/remove'
+              - '&e個人設定：&6/res pset <領地名稱> <玩家> quickshop-remove true/false/remove'
             rain:
               Translated: 下雨 (rain)
               Description: 設定領地天氣為雨天
@@ -2092,3 +2382,18 @@ CommandHelp:
           - '&e用法：&6/resload'
           - 此指令不安全，它不會先儲存領地狀態，
           - 請確定變更完領地後再重新載入存檔。
+        auction:
+          Description: 開啟領地拍賣介面或操作拍賣指令
+          Info:
+          - '&e用法：&6/res auction &7- 開啟領地拍賣瀏覽 GUI'
+          - '&e用法：&6/res auction create [領地] &7- 閱讀條款並發起拍賣'
+          - '&e用法：&6/res auction bid <編號> <金額> &7- 喊價（含確認畫面）'
+          - '&e用法：&6/res auction cancel <編號> &7- 取消無人出價的拍賣'
+          - '&e用法：&6/res auction setinc <編號> <金額> &7- 調整最低加價金額'
+          - '&e用法：&6/res auction ack &7- 檢視並確認拍賣通知'
+          - '&e管理員：&6/resadmin auction start <領地> <起標價> [加價] [小時] [NONE|ITEMS_ONLY|ALL]'
+        cleanup:
+          Description: 自動從 Plan 與 HuskSync 補齊缺少最後上線時間的領地擁有者
+          Info:
+          - '&e用法：&6/resadmin cleanup import [all|plan|husksync] [dryrun]'
+          - 自動掃描缺少 last_seen 的領地擁有者並批次匯入資料庫。

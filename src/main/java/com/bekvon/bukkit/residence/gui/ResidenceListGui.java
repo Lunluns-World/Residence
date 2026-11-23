@@ -232,6 +232,19 @@ public class ResidenceListGui implements Listener {
             }
         });
 
+        // Slot 50: Open Auction GUI
+        if (plugin.getAuctionManager() != null && plugin.getAuctionManager().isEnabled()) {
+            gui.addButton(new CMIGuiButton(50, buildControlItem(
+                    CMIMaterial.GOLD_BLOCK,
+                    lm.Gui_Auction_Btn_OpenName.getMessage(),
+                    lm.Gui_Auction_Btn_OpenLore.getMessageList())) {
+                @Override
+                public void click(GUIClickType type) {
+                    plugin.getAuctionGui().openBrowser(player, AuctionGui.AuctionFilter.ALL, AuctionGui.AuctionSort.ENDING_SOON, resadmin, 1);
+                }
+            });
+        }
+
         // Slot 51: Refresh
         gui.addButton(new CMIGuiButton(51, buildControlItem(
                 CMIMaterial.SUNFLOWER,
@@ -527,6 +540,31 @@ public class ResidenceListGui implements Listener {
                             return;
                         }
                         plugin.getMarketGui().openOwnerMarketGui(player, live, resadmin, reopenManage);
+                    }
+                });
+            }
+
+            // Slot 23: 發起領地拍賣／查看進行中拍賣（需先經條款同意頁）
+            if (plugin.getAuctionManager() != null && plugin.getAuctionManager().isEnabled()) {
+                com.bekvon.bukkit.residence.auction.core.AuctionRecord activeAuc = plugin.getAuctionManager().getCachedActiveAuctionByRes(localRes);
+                gui.addButton(new CMIGuiButton(23, buildControlItem(
+                        activeAuc != null ? CMIMaterial.GOLD_BLOCK : CMIMaterial.GOLD_INGOT,
+                        activeAuc != null ? lm.Gui_Manage_AuctionActiveName.getMessage() : lm.Gui_Manage_AuctionStartName.getMessage(),
+                        activeAuc != null ? lm.Gui_Manage_AuctionActiveLore.getMessageList() : lm.Gui_Manage_AuctionStartLore.getMessageList())) {
+                    @Override
+                    public void click(GUIClickType type) {
+                        ClaimedResidence live = plugin.getResidenceManager().getByName(entry.getResName());
+                        if (live == null) {
+                            lm.Invalid_Residence.sendMessage(player);
+                            player.closeInventory();
+                            return;
+                        }
+                        com.bekvon.bukkit.residence.auction.core.AuctionRecord currentAuc = plugin.getAuctionManager().getCachedActiveAuctionByRes(live);
+                        if (currentAuc != null) {
+                            plugin.getAuctionGui().openDetailGui(player, currentAuc.getId(), resadmin, reopenManage);
+                        } else {
+                            plugin.getAuctionGui().openTermsAgreementGui(player, live, resadmin, reopenManage);
+                        }
                     }
                 });
             }

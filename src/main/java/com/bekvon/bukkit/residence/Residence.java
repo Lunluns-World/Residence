@@ -60,10 +60,15 @@ import com.bekvon.bukkit.residence.economy.TransactionManager;
 import com.bekvon.bukkit.residence.economy.rent.RentManager;
 import com.bekvon.bukkit.residence.crossserver.CrossServerListener;
 import com.bekvon.bukkit.residence.crossserver.CrossServerManager;
+import com.bekvon.bukkit.residence.crossserver.RedisSyncBus;
+import com.bekvon.bukkit.residence.auction.AuctionManager;
+import com.bekvon.bukkit.residence.auction.AuctionProtectionListener;
+import com.bekvon.bukkit.residence.gui.AuctionGui;
 import com.bekvon.bukkit.residence.gui.FlagUtil;
 import com.bekvon.bukkit.residence.gui.MarketGui;
 import com.bekvon.bukkit.residence.gui.ResidenceGuiMetaManager;
 import com.bekvon.bukkit.residence.gui.ResidenceListGui;
+import com.bekvon.bukkit.residence.utils.PlayerActivityImporter;
 import com.bekvon.bukkit.residence.storage.DatabaseStorageManager;
 import com.bekvon.bukkit.residence.storage.StorageType;
 import com.bekvon.bukkit.residence.itemlist.WorldItemManager;
@@ -242,12 +247,16 @@ public class Residence extends JavaPlugin {
 
     private DatabaseStorageManager databaseStorageManager = null;
     private String storageServerName;
+    private RedisSyncBus redisSyncBus = null;
     private CrossServerManager crossServerManager = null;
     private ResidenceGuiMetaManager guiMetaManager = null;
     private com.bekvon.bukkit.residence.storage.PlayerLimitManager playerLimitManager = null;
     private com.bekvon.bukkit.residence.storage.CleanupReclaimManager cleanupReclaimManager = null;
+    private AuctionManager auctionManager = null;
     private ResidenceListGui residenceListGui = null;
     private MarketGui marketGui = null;
+    private AuctionGui auctionGui = null;
+    private PlayerActivityImporter playerActivityImporter = null;
 
     public DatabaseStorageManager getDatabaseStorageManager() {
         return databaseStorageManager;
@@ -255,6 +264,53 @@ public class Residence extends JavaPlugin {
 
     public void setDatabaseStorageManager(DatabaseStorageManager databaseStorageManager) {
         this.databaseStorageManager = databaseStorageManager;
+    }
+
+    public RedisSyncBus getRedisSyncBus() {
+        return redisSyncBus;
+    }
+
+    public void initRedisSyncBus() {
+        if (redisSyncBus != null) {
+            redisSyncBus.stop();
+        }
+        ConfigManager cfg = getConfigManager();
+        redisSyncBus = new RedisSyncBus(
+                getLogger(),
+                cfg.isRedisEnabled(),
+                cfg.getRedisHost(),
+                cfg.getRedisPort(),
+                cfg.getRedisPassword(),
+                cfg.getRedisDatabase(),
+                cfg.getRedisChannelPrefix(),
+                cfg.getRedisTimeoutMs(),
+                getStorageServerName());
+        redisSyncBus.start();
+    }
+
+    public AuctionManager getAuctionManager() {
+        if (auctionManager == null)
+            auctionManager = new AuctionManager(this);
+        return auctionManager;
+    }
+
+    /**
+     * 供外部整合插件（例如 Compat-Residence）查詢領地是否處於進行中拍賣凍結狀態。
+     */
+    public boolean isResidenceInAuction(ClaimedResidence res) {
+        return auctionManager != null && auctionManager.isResidenceInAuction(res);
+    }
+
+    public AuctionGui getAuctionGui() {
+        if (auctionGui == null)
+            auctionGui = new AuctionGui(this);
+        return auctionGui;
+    }
+
+    public PlayerActivityImporter getPlayerActivityImporter() {
+        if (playerActivityImporter == null)
+            playerActivityImporter = new PlayerActivityImporter(this);
+        return playerActivityImporter;
     }
 
     public CrossServerManager getCrossServerManager() {
@@ -404,9 +460,15 @@ public class Residence extends JavaPlugin {
             rentBukkitId.cancel();
         }
 
+        if (auctionManager != null) {
+            auctionManager.stop();
+        }
         if (crossServerManager != null) {
             crossServerManager.flushOnlinePlayerActivityNow();
             crossServerManager.stop();
+        }
+        if (redisSyncBus != null) {
+            redisSyncBus.stop();
         }
 
         if (initsuccess) {
@@ -646,6 +708,7 @@ public class Residence extends JavaPlugin {
                 throw e;
             }
 
+            initRedisSyncBus();
             getGuiMetaManager().load();
             getPlayerLimitManager().load();
             getCleanupReclaimManager().load();
@@ -654,6 +717,7 @@ public class Residence extends JavaPlugin {
                 databaseStorageManager.clearResidenceReservations(getStorageServerName());
             }
             getCrossServerManager().start();
+            getAuctionManager().start();
 
             getSignUtil().LoadSigns();
 
@@ -749,6 +813,8 @@ public class Residence extends JavaPlugin {
                 pm.registerEvents(new ResidenceRaidListener(), this);
                 pm.registerEvents(getResidenceListGui(), this);
                 pm.registerEvents(getMarketGui(), this);
+                pm.registerEvents(getAuctionGui(), this);
+                pm.registerEvents(new AuctionProtectionListener(this), this);
                 pm.registerEvents(new CrossServerListener(this), this);
 
                 if (Version.isCurrentLower(Version.v1_16_0)) {
@@ -1122,10 +1188,17 @@ public class Residence extends JavaPlugin {
     }
 
     public void reloadDatabaseAndCrossServer() {
+        if (auctionManager != null) {
+            auctionManager.stop();
+        }
         if (crossServerManager != null) {
             crossServerManager.flushOnlinePlayerActivityNow();
             crossServerManager.stop();
         }
+        if (redisSyncBus != null) {
+            redisSyncBus.stop();
+        }
+        initRedisSyncBus();
         if (guiMetaManager != null) {
             guiMetaManager.load();
         }
@@ -1136,6 +1209,7 @@ public class Residence extends JavaPlugin {
             cleanupReclaimManager.load();
         }
         getCrossServerManager().start();
+        getAuctionManager().start();
     }
 
     public String getStorageServerName() {

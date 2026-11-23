@@ -7,7 +7,7 @@ api-version: 1.13
 folia-supported: true
 authors: [Zrips,bekvon]
 depend: [CMILib]
-softdepend: [Pl3xMap,squaremap,BlueMap,Vault,Essentials,RealPlugin,iConomy,bPermissions,WorldEdit,WorldGuard,CrackShot,Multiverse-Core,MultiWorld,My_Worlds,TheWorld,dynmap,LWC,Kingdoms,PlaceholderAPI,CMI,ServerControlReloaded,Slimefun,CS-CoreLib]
+softdepend: [Pl3xMap,squaremap,BlueMap,Vault,Essentials,RealPlugin,iConomy,bPermissions,WorldEdit,WorldGuard,CrackShot,Multiverse-Core,MultiWorld,My_Worlds,TheWorld,dynmap,LWC,Kingdoms,PlaceholderAPI,CMI,ServerControlReloaded,Slimefun,CS-CoreLib,DiscordSRV,Plan,HuskSync,QuickShop-Hikari]
 contributors: [lemon42,smbarbour,inorixu,Shayana_fr,Zrips]
 commands:
   res:
@@ -309,3 +309,12 @@ permissions:
   residence.command.siege:
     description: Allows to access particular command
     default: true
+  residence.command.auction:
+    description: Allows to access Residence auction commands and GUI
+    default: true
+  residence.command.cleanup:
+    description: Allows admins to run cleanup and activity import commands
+    default: op
+  residence.auction.staff:
+    description: Marks staff members who cannot bid on archived/admin auctions
+    default: op

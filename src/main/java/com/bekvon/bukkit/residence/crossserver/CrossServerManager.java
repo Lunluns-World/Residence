@@ -78,6 +78,16 @@ public class CrossServerManager {
             refreshRemoteCacheNow();
         });
 
+        // 訂閱共用 Redis 即時事件（Redis 未啟用或斷線時由下方輪詢自動承接）
+        RedisSyncBus bus = plugin.getRedisSyncBus();
+        if (bus != null) {
+            bus.addListener((topic, payload) -> {
+                if (RedisSyncBus.TOPIC_RESIDENCE_INDEX.equals(topic) && isEnabled()) {
+                    Bukkit.getAsyncScheduler().runNow(plugin, t -> refreshRemoteCacheNow());
+                }
+            });
+        }
+
         int intervalSeconds = Math.max(5, plugin.getConfigManager().getCrossServerSyncInterval());
         syncTask = Bukkit.getAsyncScheduler().runAtFixedRate(plugin, task -> {
             if (plugin.getGuiMetaManager() != null)
@@ -193,6 +203,10 @@ public class CrossServerManager {
             return;
         try {
             db.syncLocalServerIndex(getServerName(), buildLocalEntriesSnapshot());
+            RedisSyncBus bus = plugin.getRedisSyncBus();
+            if (bus != null && bus.isEnabled()) {
+                bus.publish(RedisSyncBus.TOPIC_RESIDENCE_INDEX, getServerName());
+            }
         } catch (SQLException ex) {
             plugin.getLogger().log(Level.WARNING, "Failed to sync local residence index to database", ex);
         }

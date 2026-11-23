@@ -175,6 +175,10 @@ public class DatabaseStorageManager {
         return tablePrefix;
     }
 
+    public Object getSqliteWriteLock() {
+        return sqliteWriteLock;
+    }
+
     public void initialize() throws SQLException {
         if (!storageType.isDatabase())
             return;

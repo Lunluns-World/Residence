@@ -247,6 +247,19 @@ public class MarketGui implements Listener {
             }
         });
 
+        // Slot 47: 前往領地拍賣介面
+        if (plugin.getAuctionManager() != null && plugin.getAuctionManager().isEnabled()) {
+            gui.addButton(new CMIGuiButton(47, buildItem(
+                    CMIMaterial.GOLD_BLOCK,
+                    lm.Gui_Auction_Btn_OpenName.getMessage(),
+                    lm.Gui_Auction_Btn_OpenLore.getMessageList())) {
+                @Override
+                public void click(GUIClickType type) {
+                    plugin.getAuctionGui().openBrowser(player, AuctionGui.AuctionFilter.ALL, AuctionGui.AuctionSort.ENDING_SOON, resadmin, 1);
+                }
+            });
+        }
+
         // Slot 48: Sort toggle
         gui.addButton(new CMIGuiButton(48, buildItem(
                 CMIMaterial.COMPARATOR,

@@ -211,6 +211,18 @@ public class PlayerLimitManager {
         cache.clear();
         if (isDatabaseReady()) {
             refreshAllFromDatabaseNow();
+            com.bekvon.bukkit.residence.crossserver.RedisSyncBus bus = plugin.getRedisSyncBus();
+            if (bus != null) {
+                bus.addListener((topic, payload) -> {
+                    if (com.bekvon.bukkit.residence.crossserver.RedisSyncBus.TOPIC_PLAYER_LIMITS.equals(topic) && payload != null) {
+                        try {
+                            refreshPlayerAsync(UUID.fromString(payload.trim()));
+                        } catch (IllegalArgumentException ignored) {
+                            Bukkit.getAsyncScheduler().runNow(plugin, t -> refreshAllFromDatabaseNow());
+                        }
+                    }
+                });
+            }
         } else {
             loadYaml();
         }
@@ -298,6 +310,7 @@ public class PlayerLimitManager {
         if (isDatabaseReady()) {
             PlayerLimitData updated = plugin.getDatabaseStorageManager().addPlayerLimit(uuid, playerName, type, delta);
             updateCache(uuid, updated);
+            publishLimitUpdate(uuid);
             return updated;
         }
         PlayerLimitData updated = get(uuid).withExtraDelta(type, delta);
@@ -313,6 +326,7 @@ public class PlayerLimitManager {
         if (isDatabaseReady()) {
             PlayerLimitData updated = plugin.getDatabaseStorageManager().setPlayerLimit(uuid, playerName, type, clean);
             updateCache(uuid, updated);
+            publishLimitUpdate(uuid);
             return updated;
         }
         PlayerLimitData updated = get(uuid).withOverride(type, clean);
@@ -327,12 +341,20 @@ public class PlayerLimitManager {
         if (isDatabaseReady()) {
             PlayerLimitData updated = plugin.getDatabaseStorageManager().resetPlayerLimit(uuid, type);
             updateCache(uuid, updated);
+            publishLimitUpdate(uuid);
             return updated;
         }
         PlayerLimitData updated = type == null ? PlayerLimitData.EMPTY : get(uuid).withOverride(type, null);
         updateCache(uuid, updated);
         saveYaml();
         return updated;
+    }
+
+    private void publishLimitUpdate(UUID uuid) {
+        com.bekvon.bukkit.residence.crossserver.RedisSyncBus bus = plugin.getRedisSyncBus();
+        if (bus != null && bus.isEnabled() && uuid != null) {
+            bus.publish(com.bekvon.bukkit.residence.crossserver.RedisSyncBus.TOPIC_PLAYER_LIMITS, uuid.toString());
+        }
     }
 
     private void updateCache(UUID uuid, PlayerLimitData updated) {
