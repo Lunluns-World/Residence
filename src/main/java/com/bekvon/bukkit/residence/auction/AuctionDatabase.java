@@ -377,20 +377,41 @@ public class AuctionDatabase {
                     + "created_at BIGINT NOT NULL"
                     + ")");
 
-            createIndexSafe(st, "idx_" + t("auctions") + "_status", t("auctions"), "status, ends_at");
-            createIndexSafe(st, "idx_" + t("auctions") + "_res_uuid", t("auctions"), "res_uuid, status");
-            createIndexSafe(st, "idx_" + t("auctions") + "_orig_owner", t("auctions"), "original_owner_uuid, status");
-            createIndexSafe(st, "idx_" + t("auction_bids") + "_auction", t("auction_bids"), "auction_id, id");
-            createIndexSafe(st, "idx_" + t("auction_payouts") + "_status", t("auction_payouts"), "status, retry_count");
-            createIndexSafe(st, "idx_" + t("auction_notif") + "_player", t("auction_notifications"), "player_uuid, ack_at");
+            createIndexSafe(conn, st, "idx_" + t("auctions") + "_status", t("auctions"), "status, ends_at");
+            createIndexSafe(conn, st, "idx_" + t("auctions") + "_res_uuid", t("auctions"), "res_uuid, status");
+            createIndexSafe(conn, st, "idx_" + t("auctions") + "_orig_owner", t("auctions"), "original_owner_uuid, status");
+            createIndexSafe(conn, st, "idx_" + t("auction_bids") + "_auction", t("auction_bids"), "auction_id, id");
+            createIndexSafe(conn, st, "idx_" + t("auction_payouts") + "_status", t("auction_payouts"), "status, retry_count");
+            createIndexSafe(conn, st, "idx_" + t("auction_notif") + "_player", t("auction_notifications"), "player_uuid, ack_at");
         }
     }
 
-    private void createIndexSafe(Statement st, String idxName, String tableName, String columns) {
+    /**
+     * 先透過中繼資料確認索引不存在再建立，避免 MariaDB Connector/J 在重啟時印出 ErrorPacket 1061 警告。
+     */
+    private void createIndexSafe(Connection conn, Statement st, String idxName, String tableName, String columns) {
         try {
+            if (isSqlite() || isPostgres()) {
+                st.executeUpdate("CREATE INDEX IF NOT EXISTS " + idxName + " ON " + tableName + " (" + columns + ")");
+                return;
+            }
+            if (hasIndex(conn, tableName, idxName)) {
+                return;
+            }
             st.executeUpdate("CREATE INDEX " + idxName + " ON " + tableName + " (" + columns + ")");
         } catch (SQLException ignored) {
-            // 索引已存在時安全略過
+            // 併發啟動下若另一台分流同時建立成功則安全略過
+        }
+    }
+
+    private boolean hasIndex(Connection conn, String tableName, String idxName) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT 1 FROM information_schema.statistics WHERE table_schema = DATABASE() AND LOWER(table_name) = LOWER(?) AND LOWER(index_name) = LOWER(?) LIMIT 1")) {
+            ps.setString(1, tableName);
+            ps.setString(2, idxName);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
         }
     }
 
