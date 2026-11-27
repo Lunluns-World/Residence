@@ -71,7 +71,7 @@ public class WorldEdit7SelectionManager extends SelectionManager {
             Location p1 = getPlayerLoc1(player);
             Location p2 = getPlayerLoc2(player);
 
-            LocalSession session = plugin.getWorldEdit().getSession(player);
+            LocalSession session = ((WorldEditPlugin) plugin.getWorldEdit()).getSession(player);
 
             RegionSelector selector = session.getRegionSelector(w);
             selector.selectPrimary(BlockVector3.at(p1.getBlockX(), p1.getBlockY(), p1.getBlockZ()), PermissiveSelectorLimits.getInstance());

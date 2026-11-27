@@ -58,6 +58,9 @@ public class gui implements cmd {
         case "fav":
             plugin.getResidenceListGui().openBrowser(player, FilterMode.PINNED, SortMode.DEFAULT, null, resadmin, 1);
             return true;
+        case "batch":
+            plugin.getResidenceListGui().openBatchBrowser(player, FilterMode.ALL, SortMode.DEFAULT, null, resadmin, 1);
+            return true;
         case "manage": {
             RemoteResidenceEntry entry = resolveManagedEntry(plugin, player, args.length >= 2 ? args[1] : null, resadmin);
             if (entry != null) {

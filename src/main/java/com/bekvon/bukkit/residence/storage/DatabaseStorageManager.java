@@ -175,6 +175,10 @@ public class DatabaseStorageManager {
         return tablePrefix;
     }
 
+    public Object getSqliteWriteLock() {
+        return sqliteWriteLock;
+    }
+
     public void initialize() throws SQLException {
         if (!storageType.isDatabase())
             return;
@@ -1099,6 +1103,36 @@ public class DatabaseStorageManager {
         }
     }
 
+    public static final class PlayerActivityRecord {
+        private final UUID playerUuid;
+        private final String playerName;
+        private final long lastSeen;
+        private final String lastServer;
+
+        public PlayerActivityRecord(UUID playerUuid, String playerName, long lastSeen, String lastServer) {
+            this.playerUuid = playerUuid;
+            this.playerName = playerName == null ? "" : playerName;
+            this.lastSeen = lastSeen;
+            this.lastServer = lastServer == null ? "" : lastServer;
+        }
+
+        public UUID getPlayerUuid() {
+            return playerUuid;
+        }
+
+        public String getPlayerName() {
+            return playerName;
+        }
+
+        public long getLastSeen() {
+            return lastSeen;
+        }
+
+        public String getLastServer() {
+            return lastServer;
+        }
+    }
+
     public Map<UUID, Long> loadAllPlayerLastSeen() throws SQLException {
         Map<UUID, Long> map = new HashMap<>();
         String sql = "SELECT player_uuid, last_seen FROM " + tablePrefix + "player_activity";
@@ -1112,6 +1146,68 @@ public class DatabaseStorageManager {
             }
         }
         return map;
+    }
+
+    public List<PlayerActivityRecord> loadAllPlayerActivities() throws SQLException {
+        List<PlayerActivityRecord> list = new ArrayList<>();
+        String sql = "SELECT player_uuid, player_name, last_seen, last_server FROM " + tablePrefix + "player_activity";
+        try (Connection conn = openConnection(); PreparedStatement ps = conn.prepareStatement(sql); ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                UUID uuid = parseUuid(rs.getString("player_uuid"));
+                if (uuid != null) {
+                    list.add(new PlayerActivityRecord(
+                            uuid,
+                            rs.getString("player_name"),
+                            rs.getLong("last_seen"),
+                            rs.getString("last_server")));
+                }
+            }
+        }
+        return list;
+    }
+
+    public PlayerActivityRecord findPlayerActivityByName(String playerName) throws SQLException {
+        if (playerName == null || playerName.trim().isEmpty()) {
+            return null;
+        }
+        String sql = "SELECT player_uuid, player_name, last_seen, last_server FROM " + tablePrefix + "player_activity "
+                + "WHERE LOWER(player_name) = LOWER(?) ORDER BY last_seen DESC LIMIT 1";
+        try (Connection conn = openConnection(); PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, playerName.trim());
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    UUID uuid = parseUuid(rs.getString("player_uuid"));
+                    if (uuid != null) {
+                        return new PlayerActivityRecord(
+                                uuid,
+                                rs.getString("player_name"),
+                                rs.getLong("last_seen"),
+                                rs.getString("last_server"));
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    public PlayerActivityRecord findPlayerActivityByUuid(UUID playerUuid) throws SQLException {
+        if (playerUuid == null) {
+            return null;
+        }
+        String sql = "SELECT player_uuid, player_name, last_seen, last_server FROM " + tablePrefix + "player_activity WHERE player_uuid = ?";
+        try (Connection conn = openConnection(); PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, playerUuid.toString());
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return new PlayerActivityRecord(
+                            playerUuid,
+                            rs.getString("player_name"),
+                            rs.getLong("last_seen"),
+                            rs.getString("last_server"));
+                }
+            }
+        }
+        return null;
     }
 
     private static Integer getNullableInt(ResultSet rs, String col) throws SQLException {

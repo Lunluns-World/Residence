@@ -30,6 +30,10 @@ public class CrossServerListener implements Listener {
                 plugin.getCrossServerManager().handlePlayerJoinArrival(event.getPlayer());
             }
         }
+        RedisSyncBus bus = plugin.getRedisSyncBus();
+        if (bus != null && bus.isEnabled()) {
+            bus.publish(RedisSyncBus.TOPIC_CLEANUP_RECLAIM, event.getPlayer().getUniqueId().toString());
+        }
     }
 
     @EventHandler(priority = EventPriority.MONITOR)

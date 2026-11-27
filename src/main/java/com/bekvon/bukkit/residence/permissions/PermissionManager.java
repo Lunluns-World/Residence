@@ -245,6 +245,8 @@ public class PermissionManager {
         newguyresidence("Creates residence on first chest place"),
         bypass_ignorey("Allows to ignore Y corrdiante restrictions"),
         bypass_ignoreyinsubzone("Allows to ignore subzone limitations"),
+        bypass_rangegap("Allows to ignore minimum residence gap restrictions"),
+        audit("Allows access to Residence audit lookup and rollback commands"),
         bypass_destroy("Allows to bypass destroy flag"),
         bypass_build("Allows to bypass build flag"),
         bypass_container("Allows to bypass container flag"),

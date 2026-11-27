@@ -122,6 +122,10 @@ public class FileCleanUp {
 
                 if (plugin.getConfigManager().isAutoCleanTrasnferToUser()
                         && !res.getOwner().equalsIgnoreCase(plugin.getConfigManager().getAutoCleanUserName())) {
+                    if (plugin.getAuditManager() != null) {
+                        plugin.getAuditManager().captureBeforeMutation(
+                                null, res, com.bekvon.bukkit.residence.audit.AuditAction.OWNER, "#autocleanup");
+                    }
                     String originalOwnerName = res.getOwner();
                     if (plugin.getConfigManager().isAutoCleanRestoreOnReturn() && plugin.getCleanupReclaimManager() != null) {
                         plugin.getCleanupReclaimManager().recordArchived(res, ownerUuid, originalOwnerName);
@@ -133,7 +137,22 @@ public class FileCleanUp {
                     if (plugin.getTransactionManager().isForSale(res))
                         plugin.getTransactionManager().removeFromSale(res);
                 } else {
-                    plugin.getResidenceManager().removeResidence(rPlayer, res, true, useRegenerate);
+                    if (plugin.getAuditManager() != null) {
+                        boolean willRefund = !res.isServerLand()
+                                && ((plugin.getConfigManager().enableEconomy()
+                                        && plugin.getConfigManager().useResMoneyBack()
+                                        && (plugin.getConfigManager().isChargeOnCreation()
+                                                || plugin.getConfigManager().isChargeOnExpansion()
+                                                || plugin.getConfigManager().isChargeOnAreaAdd())
+                                        && res.getWorth() > 0)
+                                        || (res.getBank().getStoredMoneyD() > 0 && plugin.getConfigManager().isResBankBack()));
+                        plugin.getAuditManager().recordRemoveBeforeDelete(null, res, willRefund, "#autocleanup");
+                        final boolean finalRegen = useRegenerate;
+                        plugin.getAuditManager().runSuspended(
+                                () -> plugin.getResidenceManager().removeResidence(rPlayer, res, true, finalRegen));
+                    } else {
+                        plugin.getResidenceManager().removeResidence(rPlayer, res, true, useRegenerate);
+                    }
                 }
                 cleaned++;
             }

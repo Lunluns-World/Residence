@@ -64,14 +64,27 @@ public class InformationPager {
     }
 
     public void printListInfo(CommandSender sender, UUID uuid, TreeMap<String, ClaimedResidence> ownedResidences, int page, boolean resadmin, World world) {
+        String targetPlayer = null;
+        if (uuid != null) {
+            targetPlayer = ResidencePlayer.getName(uuid);
+            if ((targetPlayer == null || targetPlayer.isEmpty()) && plugin.getCleanupReclaimManager() != null) {
+                targetPlayer = plugin.getCleanupReclaimManager().findOriginalOwnerName(uuid);
+            }
+            if ((targetPlayer == null || targetPlayer.isEmpty()) && plugin.getCrossServerManager() != null) {
+                targetPlayer = plugin.getCrossServerManager().getCachedPlayerName(uuid);
+            }
+            if (targetPlayer == null || targetPlayer.isEmpty()) {
+                targetPlayer = uuid.toString().substring(0, 8);
+            }
+        }
+        printListInfoForTargetName(sender, targetPlayer, ownedResidences, page, resadmin, world);
+    }
+
+    public void printListInfoForTargetName(CommandSender sender, String targetPlayer, TreeMap<String, ClaimedResidence> ownedResidences, int page, boolean resadmin, World world) {
 
         int perPage = 20;
         if (sender instanceof Player)
             perPage = 10;
-
-        String targetPlayer = null;
-        if (uuid != null)
-            targetPlayer = ResidencePlayer.getName(uuid);
 
         if (ownedResidences.isEmpty()) {
             lm.Residence_DontOwn.sendMessage(sender, targetPlayer);
@@ -113,7 +126,45 @@ public class InformationPager {
 
             ClaimedResidence res = resT.getValue();
             StringBuilder StringB = new StringBuilder();
-            StringB.append(lm.General_Owner.getMessage(res.getOwner()));
+            String ExtraString = "";
+
+            boolean isArchived = plugin.getCleanupReclaimManager() != null
+                    && plugin.getCleanupReclaimManager().isArchivedHolder(res.getOwner());
+            if (isArchived) {
+                String archivedLine = plugin.getCleanupReclaimManager().formatArchivedInfoLine(res);
+                StringB.append(archivedLine != null ? archivedLine : lm.General_Owner.getMessage(res.getOwner()));
+                com.bekvon.bukkit.residence.storage.CleanupReclaimManager.ReclaimEntry arc = plugin.getCleanupReclaimManager().getArchivedEntry(res);
+                if (arc != null && arc.getOriginalOwnerUuid() != null) {
+                    String fullSeen = plugin.getCrossServerManager() != null
+                            ? plugin.getCrossServerManager().formatLastSeenValue(arc.getOriginalOwnerUuid(), true)
+                            : lm.Residence_LastSeenUnknown.getMessage();
+                    String shortSeen = plugin.getCrossServerManager() != null
+                            ? plugin.getCrossServerManager().formatLastSeenValue(arc.getOriginalOwnerUuid(), false)
+                            : lm.Residence_LastSeenUnknown.getMessage();
+                    StringB.append("\n").append(lm.Residence_ArchivedOwnerLastSeen.getMessage(fullSeen));
+                    ExtraString += lm.Residence_ListArchivedSuffix.getMessage(arc.getOriginalOwnerName(), shortSeen);
+                } else {
+                    StringB.append("\n").append(lm.Residence_ArchivedOwnerUnset.getMessage(res.getName()));
+                    ExtraString += lm.Residence_ListArchivedUnknownSuffix.getMessage();
+                }
+            } else {
+                StringB.append(lm.General_Owner.getMessage(res.getOwner()));
+                if (res.getOwnerUUID() != null
+                        && !res.getOwnerUUID().equals(plugin.getServerUUID())
+                        && !res.getOwner().equalsIgnoreCase("Server Land")
+                        && !res.getOwner().equalsIgnoreCase(plugin.getServerLandName())) {
+                    String fullSeen = plugin.getCrossServerManager() != null
+                            ? plugin.getCrossServerManager().formatLastSeenValue(res.getOwnerUUID(), true)
+                            : lm.Residence_LastSeenUnknown.getMessage();
+                    StringB.append("\n").append(lm.Residence_OwnerLastSeen.getMessage(fullSeen));
+                    if (!res.isOwner(sender)) {
+                        String shortSeen = plugin.getCrossServerManager() != null
+                                ? plugin.getCrossServerManager().formatLastSeenValue(res.getOwnerUUID(), false)
+                                : lm.Residence_LastSeenUnknown.getMessage();
+                        ExtraString += lm.Residence_ListLastSeenSuffix.getMessage(shortSeen);
+                    }
+                }
+            }
 
             if (res.getAreaArray().length > 0 && (res.getPermissions().has(Flags.hidden, FlagCombo.FalseOrNone) && res.getPermissions().has(Flags.coords, FlagCombo.TrueOrNone) || resadmin)) {
                 StringB.append("\n");
@@ -126,13 +177,12 @@ public class InformationPager {
 
             StringB.append("\n").append(lm.General_CreatedOn.getMessage(GetTime.getTime(res.getCreateTime())));
 
-            String ExtraString = "";
             if (res.isForRent()) {
                 if (res.isRented()) {
-                    ExtraString = " " + lm.Residence_IsRented.getMessage();
+                    ExtraString += " " + lm.Residence_IsRented.getMessage();
                     StringB.append("\n").append(lm.Residence_RentedBy.getMessage(res.getRentedLand().getRenterName()));
                 } else {
-                    ExtraString = " " + lm.Residence_IsForRent.getMessage();
+                    ExtraString += " " + lm.Residence_IsForRent.getMessage();
                 }
                 RentableLand rentable = res.getRentable();
                 StringB.append("\n").append(lm.General_Cost.getMessage(rentable.cost, rentable.days));
@@ -142,7 +192,7 @@ public class InformationPager {
             }
 
             if (res.isForSell()) {
-                ExtraString = " " + lm.Residence_IsForSale.getMessage();
+                ExtraString += " " + lm.Residence_IsForSale.getMessage();
                 StringB.append("\n " + lm.Economy_LandForSale.getMessage() + " " + res.getSellPrice());
             }
 

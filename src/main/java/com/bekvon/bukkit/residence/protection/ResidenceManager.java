@@ -393,6 +393,9 @@ public class ResidenceManager implements ResidenceInterface {
         if (plugin.getCrossServerManager() != null && plugin.getCrossServerManager().isEnabled()) {
             plugin.getCrossServerManager().triggerAsyncSync();
         }
+        if (plugin.getAuditManager() != null) {
+            plugin.getAuditManager().recordCreate(player, newRes);
+        }
         return true;
 
     }
@@ -461,9 +464,56 @@ public class ResidenceManager implements ResidenceInterface {
         ownedResidences.putAll(plugin.getRentManager().getRentsMap(targetUuid, onlyHidden, world));
         ownedResidences.putAll(plugin.getPlayerManager().getTrustedResidencesMap(targetUuid, hidden, onlyHidden, world));
 
+        // 併入由 Server_Unclaimed 暫管、但原領地主為 targetUuid 的本服領地（方便管理員與玩家反查被保管領地）
+        if (plugin.getCleanupReclaimManager() != null) {
+            for (ClaimedResidence res : residences.values()) {
+                if (res == null || !res.isTopArea())
+                    continue;
+                if (!plugin.getCleanupReclaimManager().isArchivedHolder(res.getOwner()))
+                    continue;
+                com.bekvon.bukkit.residence.storage.CleanupReclaimManager.ReclaimEntry archived = plugin.getCleanupReclaimManager().getArchivedEntry(res);
+                if (archived == null || !targetUuid.equals(archived.getOriginalOwnerUuid()))
+                    continue;
+                boolean isHidden = res.getPermissions().has(Flags.hidden, false);
+                if (!hidden && !resadmin && isHidden)
+                    continue;
+                if (onlyHidden && !isHidden)
+                    continue;
+                if (world != null && !world.getName().equalsIgnoreCase(res.getWorldName()))
+                    continue;
+                ownedResidences.put(res.getName(), res);
+            }
+        }
+
         plugin.getInfoPageManager().printListInfo(sender, targetUuid, ownedResidences, page, resadmin, world);
         if (world == null && page == 1 && plugin.getCrossServerManager() != null && plugin.getCrossServerManager().isEnabled()) {
             printRemoteResidences(sender, plugin.getCrossServerManager().getRemoteResidencesByOwner(targetUuid), hidden, resadmin);
+        }
+    }
+
+    public void listArchivedResidences(CommandSender sender, String holderDisplayName, int page, boolean resadmin, World world) {
+        boolean showHidden = resadmin || ResAdmin.isResAdmin(sender);
+        TreeMap<String, ClaimedResidence> archivedMap = new TreeMap<>();
+        if (plugin.getCleanupReclaimManager() != null) {
+            for (ClaimedResidence res : residences.values()) {
+                if (res == null || !res.isTopArea())
+                    continue;
+                if (!plugin.getCleanupReclaimManager().isArchivedHolder(res.getOwner()))
+                    continue;
+                boolean isHidden = res.getPermissions().has(Flags.hidden, false);
+                if (!showHidden && isHidden)
+                    continue;
+                if (world != null && !world.getName().equalsIgnoreCase(res.getWorldName()))
+                    continue;
+                archivedMap.put(res.getName(), res);
+            }
+        }
+        String label = holderDisplayName != null && !holderDisplayName.isEmpty()
+                ? holderDisplayName
+                : plugin.getConfigManager().getAutoCleanUserName();
+        plugin.getInfoPageManager().printListInfoForTargetName(sender, label, archivedMap, page, resadmin, world);
+        if (world == null && page == 1 && plugin.getCrossServerManager() != null && plugin.getCrossServerManager().isEnabled()) {
+            printRemoteResidences(sender, plugin.getCrossServerManager().getRemoteArchivedResidences(), showHidden, resadmin);
         }
     }
 
@@ -497,8 +547,22 @@ public class ResidenceManager implements ResidenceInterface {
         for (int i = 0; i < Math.min(visible.size(), maxShown); i++) {
             RemoteResidenceEntry e = visible.get(i);
             String serverLabel = plugin.getConfigManager().getCrossServerDisplayName(e.getServerName());
+            String ownerSuffix = "&f" + e.getOwnerName();
+            if (plugin.getCleanupReclaimManager() != null && plugin.getCleanupReclaimManager().isArchivedHolder(e.getOwnerName())) {
+                com.bekvon.bukkit.residence.storage.CleanupReclaimManager.ReclaimEntry arc = plugin.getCleanupReclaimManager()
+                        .getArchivedEntry(e.getServerName(), e.getResName(), e.getResUuid());
+                if (arc != null && arc.getOriginalOwnerUuid() != null) {
+                    String seen = plugin.getCrossServerManager().formatLastSeenValue(arc.getOriginalOwnerUuid(), false);
+                    ownerSuffix = "&c" + e.getOwnerName() + lm.Residence_ListArchivedSuffix.getMessage(arc.getOriginalOwnerName(), seen);
+                } else {
+                    ownerSuffix = "&c" + e.getOwnerName() + lm.Residence_ListArchivedUnknownSuffix.getMessage();
+                }
+            } else if (e.getOwnerUuid() != null && !e.getOwnerUuid().equals(plugin.getServerUUID())) {
+                String seen = plugin.getCrossServerManager().formatLastSeenValue(e.getOwnerUuid(), false);
+                ownerSuffix = "&f" + e.getOwnerName() + lm.Residence_ListLastSeenSuffix.getMessage(seen);
+            }
             String line = CMIChatColor.translate("&6[" + serverLabel + "&6] &e" + e.getDisplayName()
-                    + " &7(" + e.getWorldName() + ") &8- &f" + e.getOwnerName());
+                    + " &7(" + e.getWorldName() + ") &8- " + ownerSuffix);
             if (sender instanceof Player) {
                 RawMessage rm = new RawMessage();
                 rm.addText(line)
@@ -660,6 +724,59 @@ public class ResidenceManager implements ResidenceInterface {
         return null;
     }
 
+    /**
+     * 檢查目標區域向外擴張最小領地間距（AntiGreef.RangeGaps）後，是否與任何「未授權貼鄰」的他方主領地過近。
+     * <p>
+     * 支援繞過條件：
+     * 1. 全域繞過：使用 /resadmin、開啟 /res resadmin、或擁有明確授權的 residence.bypass.rangegap 權限。
+     * 2. 單一鄰居授權：該鄰居領地為自己名下、或鄰居領地已對此玩家／全體開啟 neighbor（或 admin）旗標。
+     */
+    public ClaimedResidence checkRangeGapCollision(CuboidArea area, ClaimedResidence ignoreResidence, Player player, boolean resadmin) {
+        if (area == null || area.getWorld() == null || player == null) {
+            return null;
+        }
+        int gap = plugin.getConfigManager().getAntiGreefRangeGaps(area.getWorldName());
+        if (gap <= 0) {
+            return null;
+        }
+        boolean resAdminToggle = ResAdmin.isResAdmin(player);
+        boolean bypassPerm = ResPerm.bypass_rangegap.hasSetPermission(player);
+        if (RangeGapPolicy.hasGlobalBypass(resadmin, resAdminToggle, bypassPerm)) {
+            return null;
+        }
+
+        Location low = area.getLowLocation().clone().add(-gap, -gap, -gap);
+        Location high = area.getHighLocation().clone().add(gap, gap, gap);
+        CuboidArea expanded = new CuboidArea(low, high);
+
+        Set<ClaimedResidence> candidates = getResidences(expanded.getWorldName(), expanded.getChunks());
+        if (candidates.isEmpty() && !residences.isEmpty()) {
+            chunkIndexLock.readLock().lock();
+            try {
+                if (!chunkResidences.containsKey(expanded.getWorldName())) {
+                    candidates = new HashSet<ClaimedResidence>(residences.values());
+                }
+            } finally {
+                chunkIndexLock.readLock().unlock();
+            }
+        }
+
+        UUID playerUuid = player.getUniqueId();
+        return RangeGapPolicy.findFirstBlockingNeighbor(
+                candidates,
+                check -> check == ignoreResidence,
+                check -> check.checkCollision(expanded),
+                check -> {
+                    boolean sameOwner = playerUuid != null && check.isOwner(playerUuid);
+                    boolean neighborAllowed = Flags.neighbor.isGlobalyEnabled()
+                            && check.getPermissions().playerHas(player, Flags.neighbor, FlagCombo.OnlyTrue);
+                    boolean adminAllowed = Flags.admin.isGlobalyEnabled()
+                            && check.getPermissions().playerHas(player, Flags.admin, FlagCombo.OnlyTrue);
+                    return RangeGapPolicy.canIgnoreNeighbor(
+                            resadmin, resAdminToggle, bypassPerm, sameOwner, neighborAllowed, adminAllowed);
+                });
+    }
+
     public Set<ClaimedResidence> getResidences(String worldName, List<ChunkRef> chunks) {
         chunkIndexLock.readLock().lock();
         try {
@@ -774,6 +891,19 @@ public class ResidenceManager implements ResidenceInterface {
         if (resevent.isCancelled())
             return;
 
+        if (plugin.getAuditManager() != null) {
+            boolean willRefund = !res.isServerLand()
+                    && ((res.getParent() == null
+                            && plugin.getConfigManager().enableEconomy()
+                            && plugin.getConfigManager().useResMoneyBack()
+                            && (plugin.getConfigManager().isChargeOnCreation()
+                                    || plugin.getConfigManager().isChargeOnExpansion()
+                                    || plugin.getConfigManager().isChargeOnAreaAdd())
+                            && res.getWorth() > 0)
+                            || (res.getBank().getStoredMoneyD() > 0 && plugin.getConfigManager().isResBankBack()));
+            plugin.getAuditManager().recordRemoveBeforeDelete(player, res, willRefund, null);
+        }
+
         ClaimedResidence parent = res.getParent();
         removeChunkList(res);
 
@@ -795,17 +925,32 @@ public class ResidenceManager implements ResidenceInterface {
             lm.Residence_Remove.sendMessage(player, name);
         } else {
             String[] split = name.split("\\.");
-            if (player != null) {
-                parent.removeSubzone(player, split[split.length - 1], true);
+            final Player finalPlayer = player;
+            Runnable removeSubAction = () -> {
+                if (finalPlayer != null) {
+                    parent.removeSubzone(finalPlayer, split[split.length - 1], true);
+                } else {
+                    parent.removeSubzone(split[split.length - 1]);
+                }
+            };
+            if (plugin.getAuditManager() != null) {
+                plugin.getAuditManager().runSuspended(removeSubAction);
             } else {
-                parent.removeSubzone(split[split.length - 1]);
+                removeSubAction.run();
             }
         }
 
         cleanResidenceRecords(res, true);
 
-        for (ClaimedResidence sub : res.getSubzones()) {
-            removeResidence(rPlayer, sub, resadmin, false);
+        Runnable removeChildren = () -> {
+            for (ClaimedResidence sub : res.getSubzones()) {
+                removeResidence(rPlayer, sub, resadmin, false);
+            }
+        };
+        if (plugin.getAuditManager() != null) {
+            plugin.getAuditManager().runSuspended(removeChildren);
+        } else {
+            removeChildren.run();
         }
 
         if (plugin.isFullyLoaded())
@@ -813,6 +958,9 @@ public class ResidenceManager implements ResidenceInterface {
                 ResidencePlayer.get(one).updateResidenceLocation();
             }
         if (parent == null) {
+            if (plugin.getCleanupReclaimManager() != null) {
+                plugin.getCleanupReclaimManager().removeArchivedRecord(res);
+            }
             if (plugin.getGuiMetaManager() != null) {
                 plugin.getGuiMetaManager().onResidenceRemoved(res.getName());
             }
@@ -1011,7 +1159,9 @@ public class ResidenceManager implements ResidenceInterface {
         ResidencePermissions perms = res.getPermissions();
 
         String resNameOwner = lm.Residence_Line.getMessage(areaname);
-        String archivedInfo = plugin.getCleanupReclaimManager() != null
+        boolean isArchived = plugin.getCleanupReclaimManager() != null
+                && plugin.getCleanupReclaimManager().isArchivedHolder(perms.getOwner());
+        String archivedInfo = isArchived
                 ? plugin.getCleanupReclaimManager().formatArchivedInfoLine(res)
                 : null;
         if (archivedInfo != null) {
@@ -1025,6 +1175,32 @@ public class ResidenceManager implements ResidenceInterface {
 
         resNameOwner = CMIChatColor.translate(resNameOwner);
 
+        String lastSeenLine = null;
+        String archivedSinceHover = null;
+        if (isArchived && plugin.getCleanupReclaimManager() != null) {
+            com.bekvon.bukkit.residence.storage.CleanupReclaimManager.ReclaimEntry archived = plugin.getCleanupReclaimManager().getArchivedEntry(res);
+            if (archived != null && archived.getOriginalOwnerUuid() != null) {
+                String seenVal = plugin.getCrossServerManager() != null
+                        ? plugin.getCrossServerManager().formatLastSeenValue(archived.getOriginalOwnerUuid(), true)
+                        : lm.Residence_LastSeenUnknown.getMessage();
+                lastSeenLine = lm.Residence_ArchivedOwnerLastSeen.getMessage(seenVal);
+                if (archived.getArchivedAt() > 0L) {
+                    archivedSinceHover = lm.Residence_ArchivedAtInfo.getMessage(GetTime.getTime(archived.getArchivedAt()));
+                }
+            } else {
+                lastSeenLine = lm.Residence_ArchivedOwnerUnset.getMessage(areaname);
+            }
+        } else if (perms.getOwner() != null
+                && !perms.getOwner().equalsIgnoreCase("Server Land")
+                && !perms.getOwner().equalsIgnoreCase(plugin.getServerLandName())
+                && perms.getOwnerUUID() != null
+                && !perms.getOwnerUUID().equals(plugin.getServerUUID())) {
+            String seenVal = plugin.getCrossServerManager() != null
+                    ? plugin.getCrossServerManager().formatLastSeenValue(perms.getOwnerUUID(), true)
+                    : lm.Residence_LastSeenUnknown.getMessage();
+            lastSeenLine = lm.Residence_OwnerLastSeen.getMessage(seenVal);
+        }
+
         String worldInfo = lm.General_World.getMessage(perms.getWorldName());
 
         if (res.getAreaArray().length > 0 && (res.getPermissions().has(Flags.hidden, FlagCombo.FalseOrNone) && res.getPermissions().has(Flags.coords, FlagCombo.TrueOrNone) || resadmin)) {
@@ -1035,6 +1211,9 @@ public class ResidenceManager implements ResidenceInterface {
         }
 
         worldInfo += "\n" + lm.General_CreatedOn.getMessage(GetTime.getTime(res.createTime));
+        if (archivedSinceHover != null) {
+            worldInfo += "\n" + archivedSinceHover;
+        }
 
         String ResFlagList = perms.listFlags(5);
         if (!(sender instanceof Player))
@@ -1050,12 +1229,19 @@ public class ResidenceManager implements ResidenceInterface {
             rm.addText(resNameOwner).addHover(worldInfo);
             rm.show(sender);
 
+            if (lastSeenLine != null) {
+                lm.showMessage(sender, lastSeenLine);
+            }
+
             rm = new RawMessage();
 
             rm.addText(ResFlagMsg).addHover(ResFlagList);
             rm.show(sender);
         } else {
             lm.showMessage(sender, resNameOwner);
+            if (lastSeenLine != null) {
+                lm.showMessage(sender, lastSeenLine);
+            }
             lm.showMessage(sender, worldInfo);
             lm.showMessage(sender, ResFlagMsg);
         }
@@ -1682,6 +1868,9 @@ public class ResidenceManager implements ResidenceInterface {
             plugin.getSignUtil().updateSignResName(res);
 
             lm.Residence_Rename.sendMessage(sender, oldName, newName);
+            if (plugin.getCleanupReclaimManager() != null) {
+                plugin.getCleanupReclaimManager().onResidenceRenamed(res, oldName, newName);
+            }
             if (plugin.getGuiMetaManager() != null) {
                 plugin.getGuiMetaManager().onResidenceRenamed(oldName, newName);
             }
@@ -1790,7 +1979,13 @@ public class ResidenceManager implements ResidenceInterface {
                     continue;
             }
 
+            if (plugin.getAuditManager() != null) {
+                plugin.getAuditManager().recordRemoveBeforeDelete(sender, next, !next.isServerLand(), null);
+            }
             cleanResidenceRecords(next, false);
+            if (plugin.getCleanupReclaimManager() != null) {
+                plugin.getCleanupReclaimManager().removeArchivedRecord(next);
+            }
             if (plugin.getGuiMetaManager() != null) {
                 plugin.getGuiMetaManager().onResidenceRemoved(next.getName());
             }

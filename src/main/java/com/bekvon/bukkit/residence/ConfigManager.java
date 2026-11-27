@@ -1428,6 +1428,36 @@ public class ConfigManager {
         residenceGuiAllowPin = c.get("ResidenceGui.AllowPin", true);
         residenceGuiShowCrossServer = c.get("ResidenceGui.ShowCrossServer", true);
 
+        c.addComment("Redis",
+                "選配的 Redis Pub/Sub 跨服即時匯流排（加速領地索引、額度、歸還與拍賣同步）。",
+                "停用、連不上或斷線時會自動靜默退回 MariaDB 輪詢，不影響任何功能。");
+        redisEnabled = c.get("Redis.Enabled", false);
+        redisHost = c.get("Redis.Host", "localhost");
+        redisPort = c.get("Redis.Port", 6379);
+        redisPassword = c.get("Redis.Password", "");
+        redisDatabase = Math.max(0, c.get("Redis.Database", 0));
+        redisChannelPrefix = c.get("Redis.ChannelPrefix", "residence:");
+        redisTimeoutMs = Math.max(500, c.get("Redis.TimeoutMs", 3000));
+
+        c.addComment("Auction",
+                "保管領地與玩家領地喊價拍賣系統設定（需啟用經濟系統與資料庫儲存）。");
+        auctionEnabled = c.get("Auction.Enabled", true);
+        auctionDefaultMinIncrement = Math.max(1D, c.get("Auction.DefaultMinIncrement", 100D));
+        auctionMinStartPrice = Math.max(1D, c.get("Auction.MinStartPrice", 100D));
+        auctionFeePercent = Math.max(0D, Math.min(100D, c.get("Auction.FeePercent", 10D)));
+        auctionMinDurationMinutes = Math.max(1, c.get("Auction.MinDurationMinutes", 60));
+        auctionMaxDurationHours = Math.max(1, c.get("Auction.MaxDurationHours", 336));
+        auctionAntiSnipeSeconds = Math.max(0, c.get("Auction.AntiSnipeSeconds", 60));
+        auctionAntiSnipeExtendSeconds = Math.max(0, c.get("Auction.AntiSnipeExtendSeconds", 60));
+        auctionMaxAntiSnipeExtensions = Math.max(0, c.get("Auction.MaxAntiSnipeExtensions", 30));
+        auctionRelistCooldownHours = Math.max(0, c.get("Auction.RelistCooldownHours", 24));
+        auctionMaxActivePerPlayer = Math.max(1, c.get("Auction.MaxActivePerPlayer", 3));
+        auctionAnnounceBiddersOnCancel = c.get("Auction.AnnounceBiddersOnCancel", true);
+        auctionBroadcastEnabled = c.get("Auction.BroadcastEnabled", true);
+        auctionStaffBypassPermission = c.get("Auction.StaffBypassPermission", "residence.auction.staff");
+        auctionDiscordEnabled = c.get("Auction.Discord.Enabled", true);
+        auctionDiscordChannel = c.get("Auction.Discord.Channel", "auction");
+
         c.save();
     }
 
@@ -2440,6 +2470,139 @@ public class ConfigManager {
 
     public boolean isResidenceGuiShowCrossServer() {
         return residenceGuiShowCrossServer;
+    }
+
+    // Redis 跨服即時匯流排設定欄位
+    private boolean redisEnabled = false;
+    private String redisHost = "localhost";
+    private int redisPort = 6379;
+    private String redisPassword = "";
+    private int redisDatabase = 0;
+    private String redisChannelPrefix = "residence:";
+    private int redisTimeoutMs = 3000;
+
+    // 領地拍賣系統設定欄位
+    private boolean auctionEnabled = true;
+    private double auctionDefaultMinIncrement = 100D;
+    private double auctionMinStartPrice = 100D;
+    private double auctionFeePercent = 10D;
+    private int auctionMinDurationMinutes = 60;
+    private int auctionMaxDurationHours = 336;
+    private int auctionAntiSnipeSeconds = 60;
+    private int auctionAntiSnipeExtendSeconds = 60;
+    private int auctionMaxAntiSnipeExtensions = 30;
+    private int auctionRelistCooldownHours = 24;
+    private int auctionMaxActivePerPlayer = 3;
+    private boolean auctionAnnounceBiddersOnCancel = true;
+    private boolean auctionBroadcastEnabled = true;
+    private String auctionStaffBypassPermission = "residence.auction.staff";
+    private boolean auctionDiscordEnabled = true;
+    private String auctionDiscordChannel = "auction";
+
+    public boolean isRedisEnabled() {
+        return redisEnabled;
+    }
+
+    public String getRedisHost() {
+        return redisHost;
+    }
+
+    public int getRedisPort() {
+        return redisPort;
+    }
+
+    public String getRedisPassword() {
+        return redisPassword;
+    }
+
+    public int getRedisDatabase() {
+        return redisDatabase;
+    }
+
+    public String getRedisChannelPrefix() {
+        return redisChannelPrefix;
+    }
+
+    public int getRedisTimeoutMs() {
+        return redisTimeoutMs;
+    }
+
+    public boolean isAuctionEnabled() {
+        return auctionEnabled;
+    }
+
+    public double getAuctionDefaultMinIncrement() {
+        return auctionDefaultMinIncrement;
+    }
+
+    public double getAuctionMinStartPrice() {
+        return auctionMinStartPrice;
+    }
+
+    public double getAuctionFeePercent() {
+        return auctionFeePercent;
+    }
+
+    public int getAuctionMinDurationMinutes() {
+        return auctionMinDurationMinutes;
+    }
+
+    public int getAuctionMaxDurationHours() {
+        return auctionMaxDurationHours;
+    }
+
+    public int getAuctionAntiSnipeSeconds() {
+        return auctionAntiSnipeSeconds;
+    }
+
+    public int getAuctionAntiSnipeExtendSeconds() {
+        return auctionAntiSnipeExtendSeconds;
+    }
+
+    public int getAuctionMaxAntiSnipeExtensions() {
+        return auctionMaxAntiSnipeExtensions;
+    }
+
+    public int getAuctionRelistCooldownHours() {
+        return auctionRelistCooldownHours;
+    }
+
+    public int getAuctionMaxActivePerPlayer() {
+        return auctionMaxActivePerPlayer;
+    }
+
+    public boolean isAuctionAnnounceBiddersOnCancel() {
+        return auctionAnnounceBiddersOnCancel;
+    }
+
+    public boolean isAuctionBroadcastEnabled() {
+        return auctionBroadcastEnabled;
+    }
+
+    public String getAuctionStaffBypassPermission() {
+        return auctionStaffBypassPermission;
+    }
+
+    public boolean isAuctionDiscordEnabled() {
+        return auctionDiscordEnabled;
+    }
+
+    public String getAuctionDiscordChannel() {
+        return auctionDiscordChannel;
+    }
+
+    public com.bekvon.bukkit.residence.auction.core.AuctionPolicy getAuctionPolicy() {
+        return new com.bekvon.bukkit.residence.auction.core.AuctionPolicy(
+                Math.round(auctionDefaultMinIncrement),
+                Math.round(auctionMinStartPrice),
+                (int) Math.round(auctionFeePercent),
+                auctionMinDurationMinutes,
+                auctionMaxDurationHours,
+                auctionAntiSnipeSeconds,
+                auctionAntiSnipeExtendSeconds,
+                auctionMaxAntiSnipeExtensions,
+                auctionRelistCooldownHours,
+                auctionMaxActivePerPlayer);
     }
 
 //    public int getTownMinRange() {

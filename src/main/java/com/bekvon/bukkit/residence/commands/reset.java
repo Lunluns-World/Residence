@@ -151,6 +151,9 @@ public class reset implements cmd {
                         lm.General_NoPermission.sendMessage(sender);
                         return true;
                     }
+                    if (plugin.getAuditManager() != null) {
+                        plugin.getAuditManager().captureBeforeMutation(sender, oneRes, com.bekvon.bukkit.residence.audit.AuditAction.FLAG);
+                    }
                     oneRes.getPermissions().resetGlobalCreatorDefaultFlags();
                     lm.Flag_resetOwnerFlags.sendMessage(sender, oneRes.getName());
                     return true;
@@ -201,6 +204,9 @@ public class reset implements cmd {
                 if (!isOwnerFlag) {
                     one.getPermissions().applyDefaultFlags();
                 } else {
+                    if (plugin.getAuditManager() != null) {
+                        plugin.getAuditManager().captureBeforeMutation(sender, one, com.bekvon.bukkit.residence.audit.AuditAction.FLAG);
+                    }
                     one.getPermissions().resetGlobalCreatorDefaultFlags();
                 }
                 count++;

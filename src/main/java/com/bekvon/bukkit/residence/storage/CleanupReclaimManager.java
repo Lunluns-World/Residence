@@ -79,6 +79,7 @@ public class CleanupReclaimManager {
     private final ConcurrentHashMap<UUID, ReclaimEntry> cacheByResUuid = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, ReclaimEntry> cacheByServerKey = new ConcurrentHashMap<>();
     private final Object yamlLock = new Object();
+    private volatile boolean redisListenerRegistered = false;
 
     public CleanupReclaimManager(Residence plugin) {
         this.plugin = plugin;
@@ -121,6 +122,18 @@ public class CleanupReclaimManager {
         cacheByServerKey.clear();
         if (isDatabaseReady()) {
             refreshCacheFromDatabaseNow();
+            com.bekvon.bukkit.residence.crossserver.RedisSyncBus bus = plugin.getRedisSyncBus();
+            if (bus != null && !redisListenerRegistered) {
+                redisListenerRegistered = true;
+                bus.addListener((topic, payload) -> {
+                    if (com.bekvon.bukkit.residence.crossserver.RedisSyncBus.TOPIC_CLEANUP_RECLAIM.equals(topic)) {
+                        Bukkit.getAsyncScheduler().runNow(plugin, task -> {
+                            refreshCacheFromDatabaseNow();
+                            reconcileCrossServerReturnsNow();
+                        });
+                    }
+                });
+            }
         } else {
             loadYaml();
             for (ReclaimEntry entry : yamlEntries.values()) {
@@ -152,10 +165,73 @@ public class CleanupReclaimManager {
     }
 
     public boolean isArchivedHolder(String ownerName) {
-        if (ownerName == null || !plugin.getConfigManager().isAutoCleanTrasnferToUser())
+        if (ownerName == null)
             return false;
         String holder = plugin.getConfigManager().getAutoCleanUserName();
-        return holder != null && !holder.trim().isEmpty() && ownerName.equalsIgnoreCase(holder);
+        if (holder == null || holder.trim().isEmpty())
+            return false;
+        if (!plugin.getConfigManager().isAutoCleanTrasnferToUser()
+                && (holder.equalsIgnoreCase("Server_Land")
+                        || holder.equalsIgnoreCase("Server land")
+                        || holder.equalsIgnoreCase(plugin.getServerLandName()))) {
+            return false;
+        }
+        return ownerName.equalsIgnoreCase(holder.trim());
+    }
+
+    public String getConfiguredArchivedHolderName() {
+        String holder = plugin.getConfigManager().getAutoCleanUserName();
+        if (holder == null || holder.trim().isEmpty())
+            return null;
+        String trimmed = holder.trim();
+        if (!plugin.getConfigManager().isAutoCleanTrasnferToUser()
+                && (trimmed.equalsIgnoreCase("Server_Land")
+                        || trimmed.equalsIgnoreCase("Server land")
+                        || trimmed.equalsIgnoreCase(plugin.getServerLandName()))) {
+            return null;
+        }
+        return trimmed;
+    }
+
+    public List<ReclaimEntry> getAllCachedEntries() {
+        return new ArrayList<>(cacheByServerKey.values());
+    }
+
+    public List<ReclaimEntry> getArchivedEntriesForOwner(UUID originalOwnerUuid) {
+        if (originalOwnerUuid == null)
+            return Collections.emptyList();
+        List<ReclaimEntry> list = new ArrayList<>();
+        for (ReclaimEntry entry : cacheByServerKey.values()) {
+            if (originalOwnerUuid.equals(entry.getOriginalOwnerUuid())) {
+                list.add(entry);
+            }
+        }
+        return list;
+    }
+
+    public ReclaimEntry findOriginalOwnerByName(String playerName) {
+        if (playerName == null || playerName.trim().isEmpty())
+            return null;
+        String target = playerName.trim();
+        for (ReclaimEntry entry : cacheByServerKey.values()) {
+            if (entry.getOriginalOwnerUuid() != null
+                    && !entry.getOriginalOwnerName().isEmpty()
+                    && entry.getOriginalOwnerName().equalsIgnoreCase(target)) {
+                return entry;
+            }
+        }
+        return null;
+    }
+
+    public String findOriginalOwnerName(UUID originalOwnerUuid) {
+        if (originalOwnerUuid == null)
+            return null;
+        for (ReclaimEntry entry : cacheByServerKey.values()) {
+            if (originalOwnerUuid.equals(entry.getOriginalOwnerUuid()) && !entry.getOriginalOwnerName().isEmpty()) {
+                return entry.getOriginalOwnerName();
+            }
+        }
+        return null;
     }
 
     public ReclaimEntry getArchivedEntry(ClaimedResidence res) {
@@ -195,25 +271,84 @@ public class CleanupReclaimManager {
         return lm.Residence_ArchivedInfoUnknown.getMessage();
     }
 
+    private void publishReclaimSync(String payload) {
+        com.bekvon.bukkit.residence.crossserver.RedisSyncBus bus = plugin.getRedisSyncBus();
+        if (bus != null && bus.isEnabled()) {
+            bus.publish(com.bekvon.bukkit.residence.crossserver.RedisSyncBus.TOPIC_CLEANUP_RECLAIM, payload);
+        }
+    }
+
     public void recordArchived(ClaimedResidence res, UUID originalOwnerUuid, String originalOwnerName) {
+        recordArchived(res, originalOwnerUuid, originalOwnerName, System.currentTimeMillis());
+    }
+
+    public void recordManualOriginalOwner(ClaimedResidence res, UUID originalOwnerUuid, String originalOwnerName) {
+        recordArchived(res, originalOwnerUuid, originalOwnerName, System.currentTimeMillis());
+    }
+
+    public void recordArchived(ClaimedResidence res, UUID originalOwnerUuid, String originalOwnerName, long archivedAtMs) {
         if (res == null || originalOwnerUuid == null || res.getName() == null)
             return;
         String serverName = plugin.getStorageServerName();
         String resName = res.getName();
         String resKey = resName.toLowerCase(Locale.ROOT);
         UUID resUuid = res.getUniqueId();
-        long archivedAt = System.currentTimeMillis();
+        long archivedAt = archivedAtMs > 0L ? archivedAtMs : System.currentTimeMillis();
         ReclaimEntry entry = new ReclaimEntry(serverName, resKey, resName, resUuid, originalOwnerUuid, originalOwnerName, archivedAt);
         putCache(entry);
 
         if (isDatabaseReady()) {
-            try {
-                plugin.getDatabaseStorageManager().upsertCleanupReclaim(entry);
-            } catch (SQLException ex) {
-                plugin.getLogger().log(Level.WARNING, "Failed to save cleanup reclaim record for " + resName, ex);
+            DatabaseStorageManager db = plugin.getDatabaseStorageManager();
+            Runnable work = () -> {
+                try {
+                    db.upsertCleanupReclaim(entry);
+                    publishReclaimSync(resKey);
+                } catch (SQLException ex) {
+                    plugin.getLogger().log(Level.WARNING, "Failed to save cleanup reclaim record for " + resName, ex);
+                }
+            };
+            if (plugin.isEnabled()) {
+                Bukkit.getAsyncScheduler().runNow(plugin, task -> work.run());
+            } else {
+                work.run();
             }
         } else {
             yamlEntries.put(resKey, entry);
+            saveYaml();
+        }
+    }
+
+    public void onResidenceRenamed(ClaimedResidence res, String oldName, String newName) {
+        if (res == null || oldName == null || newName == null)
+            return;
+        String serverName = plugin.getStorageServerName();
+        String oldKey = oldName.toLowerCase(Locale.ROOT);
+        ReclaimEntry existing = cacheByServerKey.get(compositeKey(serverName, oldKey));
+        if (existing == null && res.getUniqueId() != null) {
+            existing = cacheByResUuid.get(res.getUniqueId());
+        }
+        if (existing == null)
+            return;
+        removeCache(existing);
+        String newKey = newName.toLowerCase(Locale.ROOT);
+        ReclaimEntry updated = new ReclaimEntry(
+                serverName, newKey, newName, res.getUniqueId(),
+                existing.getOriginalOwnerUuid(), existing.getOriginalOwnerName(), existing.getArchivedAt());
+        putCache(updated);
+        if (isDatabaseReady()) {
+            DatabaseStorageManager db = plugin.getDatabaseStorageManager();
+            Bukkit.getAsyncScheduler().runNow(plugin, task -> {
+                try {
+                    db.deleteCleanupReclaim(serverName, oldKey);
+                    db.upsertCleanupReclaim(updated);
+                    publishReclaimSync(newKey);
+                } catch (SQLException ex) {
+                    plugin.getLogger().log(Level.WARNING, "Failed to update cleanup reclaim record after rename: " + oldName + " -> " + newName, ex);
+                }
+            });
+        } else {
+            yamlEntries.remove(oldKey);
+            yamlEntries.put(newKey, updated);
             saveYaml();
         }
     }
@@ -313,6 +448,10 @@ public class CleanupReclaimManager {
                 toDelete.add(entry);
                 continue;
             }
+            // 若領地正處於進行中／中止中／結標中的拍賣，交由 AuctionManager 統一處理退款與還原，避免競態重複歸還
+            if (plugin.getAuctionManager() != null && plugin.getAuctionManager().isResidenceBlockedForReclaim(res.getUniqueId())) {
+                continue;
+            }
             // Restore ownership WITHOUT resetting flags (preserves all custom flags & player trust)
             boolean changed = res.getPermissions().setOwner(entry.getOriginalOwnerUuid(), false);
             if (changed) {
@@ -365,6 +504,7 @@ public class CleanupReclaimManager {
                         plugin.getLogger().log(Level.WARNING, "Failed to delete cleanup reclaim record for " + entry.getResName(), ex);
                     }
                 }
+                publishReclaimSync("delete");
             };
             if (plugin.isEnabled()) {
                 Bukkit.getAsyncScheduler().runNow(plugin, task -> work.run());
@@ -381,6 +521,24 @@ public class CleanupReclaimManager {
 
     public List<ReclaimEntry> getLocalYamlSnapshot() {
         return Collections.unmodifiableList(new ArrayList<>(yamlEntries.values()));
+    }
+
+    /**
+     * 供拍賣系統於保管領地結標移轉或中止歸還後移除對應保管紀錄，避免重複歸還。
+     */
+    public void removeArchivedRecord(ClaimedResidence res) {
+        if (res == null || res.getName() == null) {
+            return;
+        }
+        ReclaimEntry existing = getArchivedEntry(res);
+        if (existing != null) {
+            deleteEntriesAsync(Collections.singletonList(existing));
+        } else {
+            String srv = plugin.getStorageServerName();
+            String key = res.getName().toLowerCase(Locale.ROOT);
+            ReclaimEntry synthetic = new ReclaimEntry(srv, key, res.getName(), res.getUniqueId(), null, "", 0L);
+            deleteEntriesAsync(Collections.singletonList(synthetic));
+        }
     }
 
     private void loadYaml() {

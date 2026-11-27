@@ -433,18 +433,9 @@ public class ClaimedResidence {
                 return false;
             }
 
-            if (Residence.getInstance().getConfigManager().getAntiGreefRangeGaps(area.getWorldName()) > 0) {
-                Location low = area.getLowLocation().clone();
-                Location high = area.getHighLocation().clone();
-
-                int gap = Residence.getInstance().getConfigManager().getAntiGreefRangeGaps(area.getWorldName());
-                low.add(-gap, -gap, -gap);
-                high.add(gap, gap, gap);
-
-                CuboidArea expanded = new CuboidArea(low, high);
-
-                collideResidence = Residence.getInstance().getResidenceManager().checkAreaCollision(expanded, this, player == null ? null : player.getUniqueId());
-                cRes = Residence.getInstance().getResidenceManager().getByName(collideResidence);
+            int gap = Residence.getInstance().getConfigManager().getAntiGreefRangeGaps(area.getWorldName());
+            if (gap > 0) {
+                cRes = Residence.getInstance().getResidenceManager().checkRangeGapCollision(area, this, player, resadmin);
                 if (cRes != null) {
                     if (player != null) {
                         lm.Area_TooClose.sendMessage(player, gap, cRes.getName());
@@ -638,18 +629,9 @@ public class ClaimedResidence {
                 return false;
             }
 
-            if (Residence.getInstance().getConfigManager().getAntiGreefRangeGaps(newarea.getWorldName()) > 0) {
-                Location low = newarea.getLowLocation().clone();
-                Location high = newarea.getHighLocation().clone();
-
-                int gap = Residence.getInstance().getConfigManager().getAntiGreefRangeGaps(newarea.getWorldName());
-                low.add(-gap, -gap, -gap);
-                high.add(gap, gap, gap);
-
-                CuboidArea expanded = new CuboidArea(low, high);
-
-                collideResidence = Residence.getInstance().getResidenceManager().checkAreaCollision(expanded, this, player == null ? null : player.getUniqueId());
-                cRes = Residence.getInstance().getResidenceManager().getByName(collideResidence);
+            int gap = Residence.getInstance().getConfigManager().getAntiGreefRangeGaps(newarea.getWorldName());
+            if (gap > 0) {
+                cRes = Residence.getInstance().getResidenceManager().checkRangeGapCollision(newarea, this, player, resadmin);
                 if (cRes != null) {
                     if (player != null) {
                         lm.Area_TooClose.sendMessage(player, gap, cRes.getName());
@@ -883,6 +865,9 @@ public class ClaimedResidence {
                 return false;
 
             subzones.put(name, newres);
+            if (Residence.getInstance().getAuditManager() != null) {
+                Residence.getInstance().getAuditManager().recordCreate(player, newres);
+            }
             lm.Area_Create.sendMessage(player, NName);
             lm.Subzone_Create.sendMessage(player, NName);
 
@@ -993,6 +978,9 @@ public class ClaimedResidence {
             lm.General_NoPermission.sendMessage(player);
             return false;
         }
+        if (Residence.getInstance().getAuditManager() != null) {
+            Residence.getInstance().getAuditManager().recordRemoveBeforeDelete(player, res, false, null);
+        }
         subzones.remove(name);
         Residence.getInstance().getResidenceManager().removeChunkList(res);
         lm.Subzone_Remove.sendMessage(player, name);
@@ -1066,6 +1054,10 @@ public class ClaimedResidence {
                 lm.General_NoPermission.sendMessage(sender);
                 return;
             }
+        }
+        if (Residence.getInstance().getAuditManager() != null
+                && Residence.getInstance().getResidenceManager().getByUUID(this.getTopParent().getUniqueId()) != null) {
+            Residence.getInstance().getAuditManager().captureBeforeMutation(sender, this, com.bekvon.bukkit.residence.audit.AuditAction.META);
         }
         if (enter) {
             this.setEnterMessage(message);
@@ -1247,6 +1239,10 @@ public class ClaimedResidence {
             return;
         }
 
+        if (Residence.getInstance().getAuditManager() != null
+                && Residence.getInstance().getResidenceManager().getByUUID(this.getTopParent().getUniqueId()) != null) {
+            Residence.getInstance().getAuditManager().captureBeforeMutation(player, this, com.bekvon.bukkit.residence.audit.AuditAction.META);
+        }
         tpLoc = player.getLocation().toVector();
         PitchYaw = new Vector(player.getLocation().getPitch(), player.getLocation().getYaw(), 0);
         lm.Residence_SetTeleportLocation.sendMessage(player);
@@ -1862,6 +1858,9 @@ public class ClaimedResidence {
         if (subzones.containsKey(newName)) {
             lm.Subzone_Exists.sendMessage(sender, newName);
             return false;
+        }
+        if (Residence.getInstance().getAuditManager() != null) {
+            Residence.getInstance().getAuditManager().captureBeforeMutation(sender, res, com.bekvon.bukkit.residence.audit.AuditAction.RENAME);
         }
         res.setName(newN);
         subzones.put(newName, res);

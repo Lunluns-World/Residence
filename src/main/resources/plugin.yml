@@ -309,3 +309,24 @@ permissions:
   residence.command.siege:
     description: Allows to access particular command
     default: true
+  residence.command.auction:
+    description: Allows to access Residence auction commands and GUI
+    default: true
+  residence.command.cleanup:
+    description: Allows admins to run cleanup and activity import commands
+    default: op
+  residence.command.neighbor:
+    description: Allows granting or revoking minimum residence gap neighbor permissions
+    default: true
+  residence.command.co:
+    description: Allows admins to run CoreProtect-style residence audit lookup and rollback commands
+    default: op
+  residence.audit:
+    description: Allows access to Residence audit lookup, rollback, restore, and inspector tools
+    default: op
+  residence.bypass.rangegap:
+    description: Allows bypassing minimum residence gap restrictions globally
+    default: false
+  residence.auction.staff:
+    description: Marks staff members who cannot bid on archived/admin auctions
+    default: op
