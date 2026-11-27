@@ -315,6 +315,17 @@ Language:
     CleanupRestored: '&a(๑•̀ㅂ•́)و✧ 歡迎回來！先前因久未上線由系統暫管的領地 &e%1 &a已經自動還給你，原本的設定也都完整保留喔！'
     ArchivedInfo: '&e狀態：&c原領主太久沒上線，目前由系統暫管中 &7（原擁有者：&6%1&7）'
     ArchivedInfoUnknown: '&e狀態：&c原領主太久沒上線，目前由系統暫管中'
+    OwnerLastSeen: '&e領地主上次上線：&6%1'
+    ArchivedOwnerLastSeen: '&e原領地主上次上線：&6%1'
+    ArchivedOwnerUnset: '&e原領地主：&c尚未設定 &7（管理員可用 &6/res cleanup setowner %1 <玩家> &7補登）'
+    ArchivedAtInfo: '&e進入暫管時間：&6%1'
+    LastSeenOnline: '&a目前在線上'
+    LastSeenDaysAgo: '%1 &7（%2 天前）'
+    LastSeenToday: '%1 &7（今天）'
+    LastSeenUnknown: '&c未知'
+    ListArchivedSuffix: ' &7[原領主：&f%1 &8| &7上次上線：%2&7]'
+    ListArchivedUnknownSuffix: ' &7[原領主：&c未設定&7]'
+    ListLastSeenSuffix: ' &8（&7上次上線：%1&8）'
   Rent:
     Disabled: '&c(´･_･`) 已關閉出租……'
     DisableRenew: '&e領地 &6%1 &e不會在租約到期時自動續租。'
@@ -453,6 +464,9 @@ Language:
     Entry:
       Id: '&8領地代號：&7%1'
       Owner: '&7擁有者：&f%1'
+      LastSeen: '&7上次上線：%1'
+      OriginalLastSeen: '&7原領主上次上線：%1'
+      FlagHiddenState: '&7公開清單隱藏（hidden）：%1'
       Server: '&7伺服器：&b%1%2'
       World: '&7世界：&f%1 &8(%2, %3, %4)'
       Likes: '%1&e按讚數：&f%2'
@@ -488,6 +502,7 @@ Language:
       Refresh:
         Name: '&a重新整理清單'
         Lore: '&7點擊重新載入領地清單'
+        AdminHint: '&d右鍵點擊：&f進入管理員批量旗標模式（/res set）'
       Back:
         Name: '&7返回領地清單'
       BackManage:
@@ -513,6 +528,12 @@ Language:
       DescLore:
       - '&e左鍵點擊：&7在聊天欄輸入新簡介'
       - '&e右鍵點擊：&7清除目前簡介'
+      OriginalOwnerName: '&6設定保管原領地主'
+      OriginalOwnerCurrent: '&7目前原領地主：&f%1'
+      OriginalOwnerUnset: '&c尚未設定'
+      OriginalOwnerLore:
+      - '&e左鍵點擊：&7在聊天欄輸入玩家 ID 或 UUID'
+      - '&e右鍵點擊：&c清除目前的原領地主紀錄'
       SetTpName: '&b設定領地傳送點'
       SetTpLore:
       - '&7將領地傳送點設定為'
@@ -611,6 +632,41 @@ Language:
       DescUpdated: '&a(๑•̀ㅂ•́)و✧ 領地 &e%1 &a的簡介已更新為：&f%2'
       VisibilityUpdated: '&a(๑•̀ㅂ•́)و✧ 領地 &e%1 &a在清單中的狀態已切換成 %2&a。'
       RemoteInfo: '&6[%1] &e%2 &7| 擁有者：&f%3 &7| 世界：&f%4 &8（%5, %6, %7）'
+      OriginalOwnerPrompt: '&a請在聊天室輸入保管領地 &e%1 &a的原領地主 ID 或 UUID（&7輸入 &ccancel &7取消或 &eclear &7清除&a）：'
+    Batch:
+      Title: '&5批量旗標管理 &8（已選 &e%1 &8個）&7(%2/%3)'
+      SelectedPrefix: '&a✔ [已選取] '
+      CardLeftSelect: '&e左鍵點擊：&a勾選／取消勾選此領地'
+      CardRightTp: '&e右鍵點擊：&b傳送過去勘查'
+      CardShiftManage: '&eShift+右鍵：&6開啟單一領地管理'
+      CardRemoteNotice: '&8（跨服領地：請切到 %1 分流再修改旗標）'
+      Btn:
+        SelectName: '&b選取工具 &7（已選 &e%1 &7個）'
+        SelectLore:
+        - '&e左鍵點擊：&a全選本頁的本服領地'
+        - '&eShift+左鍵：&a全選目前篩選下的所有本服領地'
+        - '&e右鍵點擊：&c清空所有已選領地'
+        QuickHiddenName: '&6一鍵批量修改：&ehidden &7（已選 &e%1 &7個）'
+        QuickHiddenLore:
+        - '&7快速把無關緊要的領地從公開列表藏起來：'
+        - '&e左鍵點擊：&a設為 hidden = true &7（從公開清單隱藏）'
+        - '&e右鍵點擊：&c設為 hidden = false &7（強制公開顯示）'
+        - '&eShift+點擊：&7移除 hidden 旗標 &8（恢復預設）'
+        AllFlagsName: '&d開啟完整 /res set 批量旗標選單'
+        AllFlagsLore:
+        - '&7目前已勾選：&e%1 &7個領地'
+        - '&7點擊開啟完整領地旗標選擇器，'
+        - '&7可一次對所有已選領地套用任意旗標！'
+        ExitName: '&c結束批量模式'
+        ExitLore:
+        - '&7返回一般領地瀏覽介面。'
+      Picker:
+        Title: '&5批量套用旗標 &8（共 &e%1 &8個領地）&7(%2/%3)'
+        Stats: '&7已選領地目前狀態：&a%1 個 true &8/ &c%2 個 false &8/ &7%3 個未設定'
+      Msg:
+        NoneSelected: '&c(´･_･`) 請先勾選至少一個本服領地再套用旗標喔！'
+        Applied: '&a(๑•̀ㅂ•́)و✧ 已成功對 &e%3 &a個領地批量設定旗標 &e%1 &a= &6%2&a%4！'
+        SkippedFrozen: ' &7（已跳過 %1 個拍賣凍結中的領地）'
     Auction:
       BrowserTitle: '&6領地拍賣場 - %1 &8(%2/%3)'
       Filter:
@@ -887,6 +943,57 @@ Language:
       StillUnknownHeader: '&e兩邊都查不到紀錄的玩家（共 %1 位）：'
       StillUnknownLine: '&c- &f%1 &8（%2）&7- %3'
       MoreLines: '&8…… 其餘還有 %1 筆未顯示。'
+    TopLevelOnly: '&c( ˘•ω•˘ ) 只有最外層的主領地才能設定暫管原領地主喔。'
+    HolderNotConfigured: '&c(´･_･`) 尚未在 config.yml 將 AutoCleanUp.UserName 設為專屬暫管帳號（例如 Server_Unclaimed）。'
+    SetOwner:
+      NotArchived: '&c(´･_･`) 領地 &e%1 &c目前的擁有者是 &f%2&c，還不是暫管帳號 &6%3&c 喔！請先轉移或直接用 &6/res cleanup archive %1 <原領地主> &c一鍵轉入保管。'
+      Resolving: '&e正在從快取與外部插件查詢玩家 &6%1 &e的真實身分……'
+      PlayerNotFound: '&c(╬☉д⊙) 在本機、資料庫、Plan、HuskSync 與 LuckPerms 都查不到玩家 &e%1 &c的 UUID，也可以直接輸入 &6<UUID> [顯示名稱] &c來指定喔！'
+      Success: '&a(๑•̀ㅂ•́)و✧ 已將暫管領地 &e%1 &a的原領地主設定為 &6%2 &8（%3，來源：%4）&a！'
+      LastSeenKnown: '&7目前已記錄的上次加入時間：&e%1'
+      LastSeenImported: '&a(๑•̀ㅂ•́)و✧ 已自動從 &6%1 &a補齊該玩家的上次加入時間：&e%2'
+      LastSeenMissing: '&e(´･_･`) 目前還查不到他的上次加入時間，可到裝有 Plan／HuskSync 的分流執行 &6/res cleanup import &e補齊喔！'
+      Cleared: '&a(´-ω-`) 已清除領地 &e%1 &a的原領地主紀錄。'
+    Archive:
+      Success: '&a(๑•̀ㅂ•́)و✧ 已將領地 &e%1 &a轉交給 &6%2 &a暫管（原有權限旗標完整保留）。'
+  Audit:
+    NotReady: '&c(╬☉д⊙) 領地稽核還原資料庫尚未就緒。'
+    Header:
+      Lookup: '&6----- &e領地操作紀錄查詢 &7（共 %1 筆，第 %2/%3 頁）&6-----'
+    NoResults: '&7(っ´ω`c) 找不到符合條件的領地操作紀錄。'
+    Lookup:
+      Line: '&7%1前 &8#%2 &b%3 &f[%4] &e%5 &7- &f%6%7'
+      RolledBackTag: ' &8&o（已還原）'
+      Hover: "&e紀錄編號 #%1\n&7時間：&f%2\n&7分流：&b%3\n&7座標：&f%4 &8(%5, %6, %7)\n&7當下領主：&f%8\n&7變更摘要：&f%9\n&e點擊檢視詳情與單筆還原按鈕"
+    Info:
+      Header: '&6=== 領地操作紀錄詳情 #%1 ==='
+      Body: "&7動作類型：&e%1%2\n&7目標領地：&6%3 &8（主領地：%4）\n&7操作者：&b%5 &8| &7擁有者：&f%6\n&7所在範圍：&f%7 &8[%8 ~ %9]\n&7發生時間：&e%10 &8（%11前）\n&7變更內容：&f%12"
+      BtnRollback: '&a[⏪ 還原此筆 #%1]'
+      BtnRestore: '&b[⏩ 重做此筆 #%1]'
+      BtnTp: '&e[📍 傳送至現場]'
+    Inspect:
+      Enabled: '&a(๑•̀ㅂ•́)و✧ 已&2開啟&a領地稽核檢查模式！左鍵或右鍵點擊任意方塊即可查詢該位置的領地歷史（包含已被刪除的領地）。'
+      Disabled: '&e(´-ω-`) 已&c關閉&e領地稽核檢查模式。'
+      BlockHeader: '&6--- 位置 &e%1 &7(%2, %3, %4) &6的領地歷史紀錄 ---'
+    Parse:
+      MissingTime: '&c(´･_･`) 為避免誤還原全部歷史，請指定時間範圍（例如 &6t:24h&c、&6t:7d&c）或單筆編號（&6#123&c）！'
+      InvalidTime: '&c(´･_･`) 時間格式看不懂：&e%1 &7（範例：t:30m、t:12h、t:7d、t:14d-7d）'
+      InvalidRadius: '&c(´･_･`) 半徑格式不對喔：&e%1 &7（範例：r:50、r:#world、r:#global）'
+      RadiusNeedsPlayer: '&c( ˘•ω•˘ ) 使用半徑參數 &e%1 &c需要玩家站在遊戲內（或改用 w:<世界>）。'
+      InvalidAction: '&c(´･_･`) 不認識的動作篩選：&e%1 &7（可用：create, remove, subzone, flag, owner, area, rename, meta）'
+      InvalidId: '&c(´･_･`) 無效的紀錄編號：&e%1'
+      UnknownParam: '&c(´･_･`) 未知的查詢參數：&e%1 &7（可用：u:, o:, t:, r:, a:, res:, w:, #<編號>, #preview）'
+    Exec:
+      Started: '&e正在執行領地%1%2……'
+      PreviewTag: ' &b[預覽模式]'
+      ModeRollback: '操作還原（Rollback）'
+      ModeRestore: '取消還原（Restore）'
+      ModeRecover: '半徑／已刪領地恢復（Recover）'
+      Summary: "&6=== 領地%1完成%2 &6===\n&a成功套用：&f%3 筆 &8| &7狀態已一致略過：&f%4 筆 &8| &c衝突無法套用：&f%5 筆"
+      ConflictLine: '&c- #%1（%2）：%3'
+    Purge:
+      Success: '&a(๑•̀ㅂ•́)و✧ 已清理 &e%1 &a筆早於 &6%2 &a的舊稽核紀錄。'
+      MinOneDay: '&c( ˘•ω•˘ ) 清理時間至少要大於 1 天喔（例如 &6/res co purge t:30d&c）。'
   InformationPage:
     Top: '&e___/ &a %1 - %2 &e \___'
     TopSingle: '&e___/ &a %1 &e \___'
@@ -1920,6 +2027,11 @@ CommandHelp:
               Description: 允許或禁止使用命名牌
               Info:
               - '&e用法：&6/res set/pset <領地名稱> nametag true/false/remove'
+            neighbor:
+              Translated: 貼鄰建領地（neighbor）
+              Description: 允許好友或玩家無視最小領地間隔，直接在你的領地旁邊建立或擴展領地
+              Info:
+              - '&e用法：&6/res neighbor [領地名稱] <玩家|*> [true/false/remove]'
             nanimals:
               Translated: 原版生物生成（nanimals）
               Description: 允許或禁止原版生物生成
@@ -2548,6 +2660,20 @@ CommandHelp:
           Description: 開啟領地拍賣介面或管理拍賣
         cleanup:
           Info:
-          - '&e用法：&6/resadmin cleanup import [all|plan|husksync] [dryrun]'
-          - '&e自動掃描缺少最後上線時間的領地擁有者並從 Plan／HuskSync 補齊。'
-          Description: 補齊缺少最後上線時間的領地擁有者紀錄
+          - '&e用法：&6/res cleanup import [all|plan|husksync] [dryrun] &7- 從 Plan／HuskSync 補齊缺少的上次上線時間（含保管原領主）'
+          - '&e用法：&6/res cleanup setowner <領地> <玩家ID|UUID|clear> [顯示名稱] &7- 手動設定或清除 Server_Unclaimed 原領地主'
+          - '&e用法：&6/res cleanup archive <領地> [玩家ID|UUID] [顯示名稱] &7- 一鍵將領地轉為暫管並設定原領地主'
+          Description: 管理暫管領地原領地主與匯入外部最後上線紀錄
+        neighbor:
+          Info:
+          - '&e用法：&6/res neighbor [領地名稱] <玩家|*> [true|false|remove]'
+          - 授權指定好友（或 * 全體玩家）無視最小領地間隔限制，直接緊貼你的領地旁建立或擴展領地。
+          Description: 授權他人在你的領地旁小於最小間距建立領地
+        co:
+          Info:
+          - '&e用法：&6/res co l [u:<玩家>] [r:<半徑>] [t:<時間>] [a:<動作>] [res:<領地>] &7- 查詢領地歷史紀錄'
+          - '&e用法：&6/res co rb <t:<時間>|#<編號>> [u:<玩家>] [r:<半徑>] [a:<動作>] [#preview] &7- 還原領地操作'
+          - '&e用法：&6/res co rs <t:<時間>|#<編號>> [篩選條件...] [#preview] &7- 重做先前還原的操作'
+          - '&e用法：&6/res co recover <t:<時間>> [r:<半徑>] [o:<原領主>] [#preview] &7- 一鍵恢復半徑內或指定時間被刪除的領地'
+          - '&e用法：&6/res co i &7- 開關方塊點擊歷史檢查器（點擊地面即可查已刪領地）'
+          Description: 類 CoreProtect 的領地操作紀錄查詢、還原與半徑恢復系統

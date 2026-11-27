@@ -284,6 +284,13 @@ public class ResidencePermissions extends FlagPermissions {
         ResidencePlayer rPlayer = ResidencePlayer.get(this.getOwner());
         PermissionGroup group = rPlayer.getGroup(world);
 
+        if (Residence.getInstance().getAuditManager() != null
+                && this.residence != null
+                && Residence.getInstance().getResidenceManager().getByUUID(this.residence.getTopParent().getUniqueId()) != null) {
+            Residence.getInstance().getAuditManager().captureBeforeMutation(
+                    player, this.residence, com.bekvon.bukkit.residence.audit.AuditAction.FLAG);
+        }
+
         for (Entry<String, Boolean> flag : list.cuboidFlags.entrySet()) {
             if (resadmin || (group.hasFlagAccess(flag.getKey()) && !isFlagPermissionDenied(player, flag.getKey()))) {
                 this.cuboidFlags.put(flag.getKey(), flag.getValue());
@@ -746,6 +753,12 @@ public class ResidencePermissions extends FlagPermissions {
     }
 
     public void applyDefaultFlags() {
+        if (Residence.getInstance().getAuditManager() != null
+                && this.residence != null
+                && Residence.getInstance().getResidenceManager().getByUUID(this.residence.getTopParent().getUniqueId()) != null) {
+            Residence.getInstance().getAuditManager().captureBeforeMutation(
+                    null, this.residence, com.bekvon.bukkit.residence.audit.AuditAction.FLAG);
+        }
         ResidencePlayer rPlayer = ResidencePlayer.get(this.getOwner());
         Set<Entry<String, Boolean>> dflags = new HashSet<>();
         Set<Entry<String, Map<String, Boolean>>> dgflags = new HashSet<>();

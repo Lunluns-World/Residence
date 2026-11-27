@@ -171,6 +171,10 @@ public class ResidenceCommandListener implements CommandExecutor {
             case "sz":
                 cmd = "subzone";
                 break;
+            case "audit":
+                cmd = "co";
+                args[0] = "co";
+                break;
             }
 
             cmd cmdClass = getCmdClass(args);
@@ -288,7 +292,10 @@ public class ResidenceCommandListener implements CommandExecutor {
                 }
             }
 
-            Boolean respond = cmdClass.perform(Residence.getInstance(), sender, targ, resadmin);
+            final boolean finalResAdmin = resadmin;
+            Boolean respond = com.bekvon.bukkit.residence.audit.AuditManager.withActor(
+                    sender,
+                    () -> cmdClass.perform(Residence.getInstance(), sender, targ, finalResAdmin));
 
             if (respond != null && !respond) {
                 String[] tempArray = new String[args.length + 1];

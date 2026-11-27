@@ -219,8 +219,8 @@ public class Residence extends JavaPlugin {
     public Map<UUID, Long> rtMap = new HashMap<UUID, Long>();
     public Map<UUID, SafeLocationCache> teleportMap = new HashMap<UUID, SafeLocationCache>();
 
-    private com.sk89q.worldedit.bukkit.WorldEditPlugin wep = null;
-    private com.sk89q.worldguard.bukkit.WorldGuardPlugin wg = null;
+    private Plugin wep = null;
+    private Plugin wg = null;
     private CMIMaterial wepid;
 
     private UUID ServerLandUUID = UUID.fromString("00000000-0000-0000-0000-000000000000");
@@ -253,6 +253,7 @@ public class Residence extends JavaPlugin {
     private com.bekvon.bukkit.residence.storage.PlayerLimitManager playerLimitManager = null;
     private com.bekvon.bukkit.residence.storage.CleanupReclaimManager cleanupReclaimManager = null;
     private AuctionManager auctionManager = null;
+    private com.bekvon.bukkit.residence.audit.AuditManager auditManager = null;
     private ResidenceListGui residenceListGui = null;
     private MarketGui marketGui = null;
     private AuctionGui auctionGui = null;
@@ -292,6 +293,12 @@ public class Residence extends JavaPlugin {
         if (auctionManager == null)
             auctionManager = new AuctionManager(this);
         return auctionManager;
+    }
+
+    public com.bekvon.bukkit.residence.audit.AuditManager getAuditManager() {
+        if (auditManager == null)
+            auditManager = new com.bekvon.bukkit.residence.audit.AuditManager(this);
+        return auditManager;
     }
 
     /**
@@ -462,6 +469,9 @@ public class Residence extends JavaPlugin {
 
         if (auctionManager != null) {
             auctionManager.stop();
+        }
+        if (auditManager != null) {
+            auditManager.stop();
         }
         if (crossServerManager != null) {
             crossServerManager.flushOnlinePlayerActivityNow();
@@ -718,15 +728,18 @@ public class Residence extends JavaPlugin {
             }
             getCrossServerManager().start();
             getAuctionManager().start();
+            getAuditManager().start();
 
             getSignUtil().LoadSigns();
 
             if (getConfigManager().isUseResidenceFileClean()) {
                 if (databaseStorageManager != null && databaseStorageManager.isInitialized()) {
                     getCrossServerManager().seedLocalPlayerActivityNow();
+                } else {
+                    getCrossServerManager().seedLocalPlayerActivityAsync();
                 }
                 (new FileCleanUp(this)).cleanOldResidence();
-            } else if (databaseStorageManager != null && databaseStorageManager.isInitialized()) {
+            } else {
                 getCrossServerManager().seedLocalPlayerActivityAsync();
             }
             if (getConfigManager().isAutoCleanRestoreOnReturn() && databaseStorageManager != null && databaseStorageManager.isInitialized()) {
@@ -816,6 +829,7 @@ public class Residence extends JavaPlugin {
                 pm.registerEvents(getAuctionGui(), this);
                 pm.registerEvents(new AuctionProtectionListener(this), this);
                 pm.registerEvents(new CrossServerListener(this), this);
+                pm.registerEvents(getAuditManager(), this);
 
                 if (Version.isCurrentLower(Version.v1_16_0)) {
                     pm.registerEvents(new DenyMessageCache_Legacy(), this);
@@ -918,7 +932,7 @@ public class Residence extends JavaPlugin {
                     return;
                 }
 
-                this.wep = (com.sk89q.worldedit.bukkit.WorldEditPlugin) plugin;
+                this.wep = plugin;
 
                 if (SelectionManager.isWorldEditIntegration())
                     smanager = new WorldEdit7SelectionManager(server, this);
@@ -961,7 +975,7 @@ public class Residence extends JavaPlugin {
     private void setWorldGuard() {
         Plugin wgplugin = server.getPluginManager().getPlugin("WorldGuard");
         if (wgplugin != null) {
-            wg = (com.sk89q.worldguard.bukkit.WorldGuardPlugin) wgplugin;
+            wg = wgplugin;
             lm.consoleMessage("Found WorldGuard " + wg.getDescription().getVersion());
         }
     }
@@ -1190,6 +1204,9 @@ public class Residence extends JavaPlugin {
     public void reloadDatabaseAndCrossServer() {
         if (auctionManager != null) {
             auctionManager.stop();
+        }
+        if (auditManager != null) {
+            auditManager.stop();
         }
         if (crossServerManager != null) {
             crossServerManager.flushOnlinePlayerActivityNow();
@@ -1769,11 +1786,11 @@ public class Residence extends JavaPlugin {
         return InformationPagerManager;
     }
 
-    public com.sk89q.worldedit.bukkit.WorldEditPlugin getWorldEdit() {
+    public Plugin getWorldEdit() {
         return wep;
     }
 
-    public com.sk89q.worldguard.bukkit.WorldGuardPlugin getWorldGuard() {
+    public Plugin getWorldGuard() {
         return wg;
     }
 

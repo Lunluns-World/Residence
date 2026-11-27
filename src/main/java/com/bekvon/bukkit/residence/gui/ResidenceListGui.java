@@ -3,17 +3,23 @@ package com.bekvon.bukkit.residence.gui;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.Date;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.bukkit.Bukkit;
+import org.bukkit.ChatColor;
 import org.bukkit.Material;
 import org.bukkit.OfflinePlayer;
+import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -25,7 +31,9 @@ import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.inventory.meta.SkullMeta;
 
 import com.bekvon.bukkit.residence.Residence;
+import com.bekvon.bukkit.residence.commands.cleanup;
 import com.bekvon.bukkit.residence.containers.Flags;
+import com.bekvon.bukkit.residence.containers.ResAdmin;
 import com.bekvon.bukkit.residence.containers.ResidencePlayer;
 import com.bekvon.bukkit.residence.containers.lm;
 import com.bekvon.bukkit.residence.crossserver.CrossServerManager;
@@ -33,9 +41,13 @@ import com.bekvon.bukkit.residence.crossserver.RemoteResidenceEntry;
 import com.bekvon.bukkit.residence.permissions.PermissionManager.ResPerm;
 import com.bekvon.bukkit.residence.protection.ClaimedResidence;
 import com.bekvon.bukkit.residence.protection.FlagPermissions.FlagCombo;
+import com.bekvon.bukkit.residence.protection.FlagPermissions.FlagState;
+import com.bekvon.bukkit.residence.storage.CleanupReclaimManager;
+import com.bekvon.bukkit.residence.storage.CleanupReclaimManager.ReclaimEntry;
 
 import io.papermc.paper.event.player.AsyncChatEvent;
 import net.Zrips.CMILib.Colors.CMIChatColor;
+import net.Zrips.CMILib.Container.CMIText;
 import net.Zrips.CMILib.Container.PageInfo;
 import net.Zrips.CMILib.Enchants.CMIEnchantEnum;
 import net.Zrips.CMILib.GUI.CMIGui;
@@ -76,7 +88,8 @@ public class ResidenceListGui implements Listener {
     private enum EditField {
         ALIAS,
         DESCRIPTION,
-        ADD_MEMBER
+        ADD_MEMBER,
+        ORIGINAL_OWNER
     }
 
     private static final class PendingEdit {
@@ -84,34 +97,68 @@ public class ResidenceListGui implements Listener {
         final String resName;
         final EditField field;
         final boolean resadmin;
+        final Runnable reopenCallback;
         final long expiresAt;
 
         PendingEdit(String serverName, String resName, EditField field, boolean resadmin) {
+            this(serverName, resName, field, resadmin, null);
+        }
+
+        PendingEdit(String serverName, String resName, EditField field, boolean resadmin, Runnable reopenCallback) {
             this.serverName = serverName;
             this.resName = resName;
             this.field = field;
             this.resadmin = resadmin;
+            this.reopenCallback = reopenCallback;
             this.expiresAt = System.currentTimeMillis() + 60_000L;
         }
     }
 
     private final Residence plugin;
     private final Map<UUID, PendingEdit> pendingEdits = new ConcurrentHashMap<>();
+    private final Map<UUID, Set<String>> batchSelections = new ConcurrentHashMap<>();
 
     public ResidenceListGui(Residence plugin) {
         this.plugin = plugin;
     }
 
+    public boolean canUseAdminBatch(Player player, boolean resadmin) {
+        if (player == null)
+            return false;
+        return resadmin || ResAdmin.isResAdmin(player) || plugin.getPermissionManager().isResidenceAdmin(player);
+    }
+
+    private Set<String> getOrCreateBatchSelection(UUID adminUuid) {
+        return batchSelections.computeIfAbsent(adminUuid, k -> Collections.synchronizedSet(new LinkedHashSet<>()));
+    }
+
     public void openBrowser(Player player, FilterMode filter, SortMode sort, String serverFilter, boolean resadmin, int page) {
-        openBrowser(player, filter, sort, serverFilter, null, null, resadmin, page);
+        openBrowserInternal(player, filter, sort, serverFilter, null, null, false, false, resadmin, page);
     }
 
     public void openBrowserForOwner(Player player, UUID ownerUuid, String ownerName, boolean resadmin, int page) {
-        openBrowser(player, FilterMode.ALL, SortMode.DEFAULT, null, ownerUuid, ownerName, resadmin, page);
+        openBrowserInternal(player, FilterMode.ALL, SortMode.DEFAULT, null, ownerUuid, ownerName, false, false, resadmin, page);
+    }
+
+    public void openBrowserForArchivedHolder(Player player, String holderName, boolean resadmin, int page) {
+        openBrowserInternal(player, FilterMode.ALL, SortMode.DEFAULT, null, null, holderName, true, false, resadmin, page);
+    }
+
+    public void openBatchBrowser(Player player, FilterMode filter, SortMode sort, String serverFilter, boolean resadmin, int page) {
+        if (!canUseAdminBatch(player, resadmin)) {
+            lm.General_AdminOnly.sendMessage(player);
+            return;
+        }
+        openBrowserInternal(player, filter, sort, serverFilter, null, null, false, true, true, page);
     }
 
     public void openBrowser(Player player, FilterMode filter, SortMode sort, String serverFilter,
             UUID ownerFilter, String ownerFilterName, boolean resadmin, int page) {
+        openBrowserInternal(player, filter, sort, serverFilter, ownerFilter, ownerFilterName, false, false, resadmin, page);
+    }
+
+    private void openBrowserInternal(Player player, FilterMode filter, SortMode sort, String serverFilter,
+            UUID ownerFilter, String ownerFilterName, boolean archivedHolderOnly, boolean batchMode, boolean resadmin, int page) {
         if (player == null || !player.isOnline())
             return;
 
@@ -120,16 +167,26 @@ public class ResidenceListGui implements Listener {
             return;
         }
 
-        List<RemoteResidenceEntry> entries = collectFilteredEntries(player, filter, sort, serverFilter, ownerFilter, resadmin);
+        boolean adminCapable = canUseAdminBatch(player, resadmin);
+        boolean effectiveBatch = batchMode && adminCapable;
+        boolean effectiveResAdmin = effectiveBatch ? true : resadmin;
+
+        List<RemoteResidenceEntry> entries = collectFilteredEntries(
+                player, filter, sort, serverFilter, ownerFilter, archivedHolderOnly, effectiveResAdmin);
         int maxPages = Math.max(1, (entries.size() + 44) / 45);
         int safePage = Math.max(1, Math.min(page, maxPages));
         PageInfo pi = new PageInfo(45, entries.size(), safePage);
 
-        String title = buildBrowserTitle(filter, serverFilter, ownerFilterName, pi);
+        Set<String> selectedKeys = effectiveBatch ? getOrCreateBatchSelection(player.getUniqueId()) : Collections.emptySet();
+        String title = effectiveBatch
+                ? lm.Gui_Batch_Title.getMessage(selectedKeys.size(), pi.getCurrentPage(), Math.max(1, pi.getTotalPages()))
+                : buildBrowserTitle(filter, serverFilter, ownerFilterName, pi);
+
         CMIGui gui = new CMIGui(player) {
             @Override
             public void pageChange(int newPage) {
-                openBrowser(player, filter, sort, serverFilter, ownerFilter, ownerFilterName, resadmin, newPage);
+                openBrowserInternal(player, filter, sort, serverFilter, ownerFilter, ownerFilterName,
+                        archivedHolderOnly, effectiveBatch, resadmin, newPage);
             }
         };
         gui.setTitle(title);
@@ -143,14 +200,61 @@ public class ResidenceListGui implements Listener {
                 break;
 
             final RemoteResidenceEntry target = entry;
-            ItemStack item = buildEntryItem(player, target, resadmin);
+            if (effectiveBatch) {
+                String resKey = target.getResName().toLowerCase(Locale.ROOT);
+                boolean isSelected = target.isLocal() && selectedKeys.contains(resKey);
+                ItemStack batchItem = buildBatchEntryItem(player, target, isSelected);
+                CMIGuiButton btn = new CMIGuiButton(slot++, batchItem) {
+                    @Override
+                    public void click(GUIClickType type) {
+                        if (type == GUIClickType.Right) {
+                            player.closeInventory();
+                            plugin.getCrossServerManager().teleportToRemoteEntry(player, target, true);
+                            return;
+                        }
+                        if (type == GUIClickType.RightShift) {
+                            Runnable backToBatch = () -> openBrowserInternal(
+                                    player, filter, sort, serverFilter, ownerFilter, ownerFilterName,
+                                    archivedHolderOnly, true, true, pi.getCurrentPage());
+                            openManageGuiWithBack(player, target, true, backToBatch);
+                            return;
+                        }
+                        if (!target.isLocal()) {
+                            return;
+                        }
+                        if (selectedKeys.contains(resKey)) {
+                            selectedKeys.remove(resKey);
+                        } else {
+                            selectedKeys.add(resKey);
+                        }
+                        openBrowserInternal(player, filter, sort, serverFilter, ownerFilter, ownerFilterName,
+                                archivedHolderOnly, true, resadmin, pi.getCurrentPage());
+                    }
+                };
+                btn.hideItemFlags();
+                gui.addButton(btn);
+                continue;
+            }
+
+            ItemStack item = buildEntryItem(player, target, effectiveResAdmin);
             CMIGuiButton btn = new CMIGuiButton(slot++, item) {
                 @Override
                 public void click(GUIClickType type) {
-                    boolean canManage = resadmin || target.isOwner(player.getUniqueId());
+                    boolean canManage = effectiveResAdmin || target.isOwner(player.getUniqueId());
+                    if (type == GUIClickType.MiddleMouse && adminCapable && target.isLocal()) {
+                        Set<String> sel = getOrCreateBatchSelection(player.getUniqueId());
+                        String rk = target.getResName().toLowerCase(Locale.ROOT);
+                        if (sel.contains(rk))
+                            sel.remove(rk);
+                        else
+                            sel.add(rk);
+                        openBrowserInternal(player, filter, sort, serverFilter, ownerFilter, ownerFilterName,
+                                archivedHolderOnly, true, resadmin, pi.getCurrentPage());
+                        return;
+                    }
                     if (type == GUIClickType.Left) {
                         player.closeInventory();
-                        plugin.getCrossServerManager().teleportToRemoteEntry(player, target, resadmin);
+                        plugin.getCrossServerManager().teleportToRemoteEntry(player, target, effectiveResAdmin);
                         return;
                     }
                     if (type == GUIClickType.LeftShift) {
@@ -161,11 +265,15 @@ public class ResidenceListGui implements Listener {
                             lm.Gui_Msg_Pinned.sendMessage(player, target.getDisplayName());
                         else
                             lm.Gui_Msg_Unpinned.sendMessage(player, target.getDisplayName());
-                        openBrowser(player, filter, sort, serverFilter, ownerFilter, ownerFilterName, resadmin, pi.getCurrentPage());
+                        openBrowserInternal(player, filter, sort, serverFilter, ownerFilter, ownerFilterName,
+                                archivedHolderOnly, false, resadmin, pi.getCurrentPage());
                         return;
                     }
                     if (type == GUIClickType.Right && canManage) {
-                        openManageGui(player, target, filter, sort, serverFilter, ownerFilter, ownerFilterName, resadmin, pi.getCurrentPage());
+                        Runnable backToBrowser = () -> openBrowserInternal(
+                                player, filter, sort, serverFilter, ownerFilter, ownerFilterName,
+                                archivedHolderOnly, false, resadmin, pi.getCurrentPage());
+                        openManageGuiWithBack(player, target, effectiveResAdmin, backToBrowser);
                         return;
                     }
                     if (type == GUIClickType.Right || type == GUIClickType.RightShift || type == GUIClickType.MiddleMouse) {
@@ -176,7 +284,8 @@ public class ResidenceListGui implements Listener {
                             lm.Gui_Msg_Liked.sendMessage(player, target.getDisplayName());
                         else
                             lm.Gui_Msg_Unliked.sendMessage(player, target.getDisplayName());
-                        openBrowser(player, filter, sort, serverFilter, ownerFilter, ownerFilterName, resadmin, pi.getCurrentPage());
+                        openBrowserInternal(player, filter, sort, serverFilter, ownerFilter, ownerFilterName,
+                                archivedHolderOnly, false, resadmin, pi.getCurrentPage());
                     }
                 }
             };
@@ -184,19 +293,121 @@ public class ResidenceListGui implements Listener {
             gui.addButton(btn);
         }
 
-        // Bottom control bar (slots 45..53)
+        // Bottom control bar (slots 45..53; slots 45, 49, 53 are pagination)
+        String currentFilterText = (ownerFilter != null || archivedHolderOnly) && ownerFilterName != null
+                ? ownerFilterName
+                : filterLabel(filter);
+
         // Slot 46: Filter mode
-        String currentFilterText = ownerFilter != null && ownerFilterName != null ? ownerFilterName : filterLabel(filter);
         gui.addButton(new CMIGuiButton(46, buildControlItem(
                 CMIMaterial.HOPPER,
                 lm.Gui_Button_Filter_Name.getMessage(currentFilterText),
                 lm.Gui_Button_Filter_Lore.getMessageList())) {
             @Override
             public void click(GUIClickType type) {
-                FilterMode nextFilter = ownerFilter != null ? FilterMode.ALL : filter.next();
-                openBrowser(player, nextFilter, sort, serverFilter, null, null, resadmin, 1);
+                FilterMode nextFilter = (ownerFilter != null || archivedHolderOnly) ? FilterMode.ALL : filter.next();
+                openBrowserInternal(player, nextFilter, sort, serverFilter, null, null, false, effectiveBatch, resadmin, 1);
             }
         });
+
+        // Slot 48: Sort mode
+        gui.addButton(new CMIGuiButton(48, buildControlItem(
+                CMIMaterial.COMPARATOR,
+                lm.Gui_Button_Sort_Name.getMessage(sortLabel(sort)),
+                lm.Gui_Button_Sort_Lore.getMessageList())) {
+            @Override
+            public void click(GUIClickType type) {
+                openBrowserInternal(player, filter, sort.next(), serverFilter, ownerFilter, ownerFilterName,
+                        archivedHolderOnly, effectiveBatch, resadmin, 1);
+            }
+        });
+
+        if (effectiveBatch) {
+            // Slot 47: Selection Controls (Select page / Select all filtered / Clear)
+            gui.addButton(new CMIGuiButton(47, buildControlItem(
+                    CMIMaterial.CHEST_MINECART,
+                    lm.Gui_Batch_Btn_SelectName.getMessage(selectedKeys.size()),
+                    lm.Gui_Batch_Btn_SelectLore.getMessageList())) {
+                @Override
+                public void click(GUIClickType type) {
+                    if (type == GUIClickType.Right || type == GUIClickType.RightShift) {
+                        selectedKeys.clear();
+                    } else if (type == GUIClickType.LeftShift) {
+                        for (RemoteResidenceEntry e : entries) {
+                            if (e.isLocal()) {
+                                selectedKeys.add(e.getResName().toLowerCase(Locale.ROOT));
+                            }
+                        }
+                    } else {
+                        int start = Math.max(0, pi.getStart());
+                        int end = Math.min(entries.size() - 1, pi.getEnd());
+                        for (int idx = start; idx <= end; idx++) {
+                            RemoteResidenceEntry e = entries.get(idx);
+                            if (e.isLocal()) {
+                                selectedKeys.add(e.getResName().toLowerCase(Locale.ROOT));
+                            }
+                        }
+                    }
+                    openBrowserInternal(player, filter, sort, serverFilter, ownerFilter, ownerFilterName,
+                            archivedHolderOnly, true, resadmin, pi.getCurrentPage());
+                }
+            });
+
+            // Slot 50: Quick Batch hidden flag (true / false / remove)
+            gui.addButton(new CMIGuiButton(50, buildControlItem(
+                    CMIMaterial.ENDER_EYE,
+                    lm.Gui_Batch_Btn_QuickHiddenName.getMessage(selectedKeys.size()),
+                    lm.Gui_Batch_Btn_QuickHiddenLore.getMessageList())) {
+                @Override
+                public void click(GUIClickType type) {
+                    FlagState targetState;
+                    if (type == GUIClickType.Left) {
+                        targetState = FlagState.TRUE;
+                    } else if (type == GUIClickType.Right) {
+                        targetState = FlagState.FALSE;
+                    } else {
+                        targetState = FlagState.NEITHER;
+                    }
+                    applyBatchFlagOnMain(player, selectedKeys, Flags.hidden.toString(), targetState);
+                    openBrowserInternal(player, filter, sort, serverFilter, ownerFilter, ownerFilterName,
+                            archivedHolderOnly, true, resadmin, pi.getCurrentPage());
+                }
+            });
+
+            // Slot 51: Open Full /res set Batch Flag Picker GUI
+            gui.addButton(new CMIGuiButton(51, buildControlItem(
+                    CMIMaterial.ANVIL,
+                    lm.Gui_Batch_Btn_AllFlagsName.getMessage(),
+                    lm.Gui_Batch_Btn_AllFlagsLore.getMessageList(String.valueOf(selectedKeys.size())))) {
+                @Override
+                public void click(GUIClickType type) {
+                    if (selectedKeys.isEmpty()) {
+                        lm.Gui_Batch_Msg_NoneSelected.sendMessage(player);
+                        return;
+                    }
+                    openBatchFlagPickerGui(player, 1, () -> openBrowserInternal(
+                            player, filter, sort, serverFilter, ownerFilter, ownerFilterName,
+                            archivedHolderOnly, true, resadmin, pi.getCurrentPage()));
+                }
+            });
+
+            // Slot 52: Exit Batch Mode
+            gui.addButton(new CMIGuiButton(52, buildControlItem(
+                    CMIMaterial.BARRIER,
+                    lm.Gui_Batch_Btn_ExitName.getMessage(),
+                    lm.Gui_Batch_Btn_ExitLore.getMessageList())) {
+                @Override
+                public void click(GUIClickType type) {
+                    openBrowserInternal(player, filter, sort, serverFilter, ownerFilter, ownerFilterName,
+                            archivedHolderOnly, false, resadmin, pi.getCurrentPage());
+                }
+            });
+
+            gui.addPagination(pi);
+            gui.fillEmptyButtons();
+            gui.open();
+            return;
+        }
 
         // Slot 47: Server filter (when cross-server is active)
         CrossServerManager csm = plugin.getCrossServerManager();
@@ -216,21 +427,11 @@ public class ResidenceListGui implements Listener {
                 @Override
                 public void click(GUIClickType type) {
                     String nextSrv = nextServerFilter(serverFilter, servers);
-                    openBrowser(player, filter, sort, nextSrv, ownerFilter, ownerFilterName, resadmin, 1);
+                    openBrowserInternal(player, filter, sort, nextSrv, ownerFilter, ownerFilterName,
+                            archivedHolderOnly, false, resadmin, 1);
                 }
             });
         }
-
-        // Slot 48: Sort mode (slot 49 is reserved by CMIGui.addPagination for page counter on multi-page lists)
-        gui.addButton(new CMIGuiButton(48, buildControlItem(
-                CMIMaterial.COMPARATOR,
-                lm.Gui_Button_Sort_Name.getMessage(sortLabel(sort)),
-                lm.Gui_Button_Sort_Lore.getMessageList())) {
-            @Override
-            public void click(GUIClickType type) {
-                openBrowser(player, filter, sort.next(), serverFilter, ownerFilter, ownerFilterName, resadmin, 1);
-            }
-        });
 
         // Slot 50: Open Auction GUI
         if (plugin.getAuctionManager() != null && plugin.getAuctionManager().isEnabled()) {
@@ -245,21 +446,33 @@ public class ResidenceListGui implements Listener {
             });
         }
 
-        // Slot 51: Refresh
+        // Slot 51: Refresh (Right-click for Admins: Enter Batch Flag Mode)
+        List<String> refreshLore = new ArrayList<>();
+        refreshLore.add(lm.Gui_Button_Refresh_Lore.getMessage());
+        if (adminCapable) {
+            refreshLore.add(lm.Gui_Button_Refresh_AdminHint.getMessage());
+        }
         gui.addButton(new CMIGuiButton(51, buildControlItem(
                 CMIMaterial.SUNFLOWER,
                 lm.Gui_Button_Refresh_Name.getMessage(),
-                lm.Gui_Button_Refresh_Lore.getMessage())) {
+                refreshLore)) {
             @Override
             public void click(GUIClickType type) {
-                if (csm != null && csm.isEnabled()) {
+                if (adminCapable && (type == GUIClickType.Right || type == GUIClickType.RightShift)) {
+                    openBrowserInternal(player, filter, sort, serverFilter, ownerFilter, ownerFilterName,
+                            archivedHolderOnly, true, resadmin, pi.getCurrentPage());
+                    return;
+                }
+                if (csm != null) {
                     csm.refreshAsyncThen(() -> {
                         if (player.isOnline()) {
-                            openBrowser(player, filter, sort, serverFilter, ownerFilter, ownerFilterName, resadmin, pi.getCurrentPage());
+                            openBrowserInternal(player, filter, sort, serverFilter, ownerFilter, ownerFilterName,
+                                    archivedHolderOnly, false, resadmin, pi.getCurrentPage());
                         }
                     });
                 } else {
-                    openBrowser(player, filter, sort, serverFilter, ownerFilter, ownerFilterName, resadmin, pi.getCurrentPage());
+                    openBrowserInternal(player, filter, sort, serverFilter, ownerFilter, ownerFilterName,
+                            archivedHolderOnly, false, resadmin, pi.getCurrentPage());
                 }
             }
         });
@@ -290,6 +503,11 @@ public class ResidenceListGui implements Listener {
 
     public void openManageGui(Player player, RemoteResidenceEntry entry, FilterMode backFilter, SortMode backSort,
             String backServer, UUID backOwnerFilter, String backOwnerName, boolean resadmin, int backPage) {
+        openManageGuiWithBack(player, entry, resadmin,
+                () -> openBrowser(player, backFilter, backSort, backServer, backOwnerFilter, backOwnerName, resadmin, backPage));
+    }
+
+    private void openManageGuiWithBack(Player player, RemoteResidenceEntry entry, boolean resadmin, Runnable backToBrowser) {
         if (player == null || !player.isOnline() || entry == null)
             return;
         if (!resadmin && !entry.isOwner(player.getUniqueId())) {
@@ -300,6 +518,7 @@ public class ResidenceListGui implements Listener {
         ResidenceGuiMetaManager metaMgr = plugin.getGuiMetaManager();
         ResidenceGuiMetadata meta = metaMgr.getMetadata(entry.getServerName(), entry.getResName());
         ClaimedResidence localRes = entry.isLocal() ? plugin.getResidenceManager().getByName(entry.getResName()) : null;
+        Runnable reopenCurrentManage = () -> openManageGuiWithBack(player, refreshEntry(entry), resadmin, backToBrowser);
 
         CMIGui gui = new CMIGui(player);
         gui.setTitle(lm.Gui_Manage_Title.getMessage(entry.getResName()));
@@ -320,7 +539,7 @@ public class ResidenceListGui implements Listener {
                 ResidenceGuiMetadata updated = metaMgr.getOrCreateMetadata(entry.getServerName(), entry.getResName());
                 updated.setListed(!updated.isListed());
                 metaMgr.updateMetadata(entry.getServerName(), entry.getResName(), updated);
-                openManageGui(player, refreshEntry(entry), backFilter, backSort, backServer, backOwnerFilter, backOwnerName, resadmin, backPage);
+                reopenCurrentManage.run();
             }
         });
 
@@ -351,7 +570,7 @@ public class ResidenceListGui implements Listener {
                     metaMgr.updateMetadata(entry.getServerName(), entry.getResName(), updated);
                     lm.Gui_Msg_IconUpdated.sendMessage(player, entry.getResName(), hand.getType().name());
                 }
-                openManageGui(player, refreshEntry(entry), backFilter, backSort, backServer, backOwnerFilter, backOwnerName, resadmin, backPage);
+                reopenCurrentManage.run();
             }
         });
 
@@ -374,11 +593,11 @@ public class ResidenceListGui implements Listener {
                     updated.setAlias(null);
                     metaMgr.updateMetadata(entry.getServerName(), entry.getResName(), updated);
                     lm.Gui_Msg_AliasCleared.sendMessage(player, entry.getResName());
-                    openManageGui(player, refreshEntry(entry), backFilter, backSort, backServer, backOwnerFilter, backOwnerName, resadmin, backPage);
+                    reopenCurrentManage.run();
                     return;
                 }
                 player.closeInventory();
-                pendingEdits.put(player.getUniqueId(), new PendingEdit(entry.getServerName(), entry.getResName(), EditField.ALIAS, resadmin));
+                pendingEdits.put(player.getUniqueId(), new PendingEdit(entry.getServerName(), entry.getResName(), EditField.ALIAS, resadmin, reopenCurrentManage));
                 lm.Gui_Msg_AliasPrompt.sendMessage(player, entry.getResName());
             }
         });
@@ -402,11 +621,11 @@ public class ResidenceListGui implements Listener {
                     updated.setDescription(null);
                     metaMgr.updateMetadata(entry.getServerName(), entry.getResName(), updated);
                     lm.Gui_Msg_DescCleared.sendMessage(player, entry.getResName());
-                    openManageGui(player, refreshEntry(entry), backFilter, backSort, backServer, backOwnerFilter, backOwnerName, resadmin, backPage);
+                    reopenCurrentManage.run();
                     return;
                 }
                 player.closeInventory();
-                pendingEdits.put(player.getUniqueId(), new PendingEdit(entry.getServerName(), entry.getResName(), EditField.DESCRIPTION, resadmin));
+                pendingEdits.put(player.getUniqueId(), new PendingEdit(entry.getServerName(), entry.getResName(), EditField.DESCRIPTION, resadmin, reopenCurrentManage));
                 lm.Gui_Msg_DescPrompt.sendMessage(player, entry.getResName());
             }
         });
@@ -474,7 +693,7 @@ public class ResidenceListGui implements Listener {
 
         // Row 3: Local Management Actions (slots 19..25)
         if (localRes != null) {
-            Runnable reopenManage = () -> openManageGui(player, refreshEntry(entry), backFilter, backSort, backServer, backOwnerFilter, backOwnerName, resadmin, backPage);
+            Runnable reopenManage = reopenCurrentManage;
 
             // Slot 19: Edit Residence Flags
             gui.addButton(new CMIGuiButton(19, buildControlItem(
@@ -569,6 +788,43 @@ public class ResidenceListGui implements Listener {
                 });
             }
 
+            // Slot 24: 管理員設定／變更 Server_Unclaimed 保管領地的原領地主
+            CleanupReclaimManager reclaimMgr = plugin.getCleanupReclaimManager();
+            if (canUseAdminBatch(player, resadmin) && reclaimMgr != null && reclaimMgr.isArchivedHolder(localRes.getOwner())) {
+                ReclaimEntry arcEntry = reclaimMgr.getArchivedEntry(localRes);
+                String curOrig = (arcEntry != null && !arcEntry.getOriginalOwnerName().isEmpty())
+                        ? arcEntry.getOriginalOwnerName()
+                        : lm.Gui_Manage_OriginalOwnerUnset.getMessage();
+                List<String> origLore = new ArrayList<>();
+                origLore.add(lm.Gui_Manage_OriginalOwnerCurrent.getMessage(curOrig));
+                if (arcEntry != null && arcEntry.getOriginalOwnerUuid() != null && plugin.getCrossServerManager() != null) {
+                    origLore.add(lm.Gui_Entry_OriginalLastSeen.getMessage(
+                            plugin.getCrossServerManager().formatLastSeenValue(arcEntry.getOriginalOwnerUuid(), true)));
+                }
+                origLore.add("");
+                origLore.addAll(lm.Gui_Manage_OriginalOwnerLore.getMessageList());
+                gui.addButton(new CMIGuiButton(24, buildControlItem(
+                        CMIMaterial.WRITTEN_BOOK,
+                        lm.Gui_Manage_OriginalOwnerName.getMessage(),
+                        origLore)) {
+                    @Override
+                    public void click(GUIClickType type) {
+                        if (!canUseAdminBatch(player, resadmin)) {
+                            lm.General_AdminOnly.sendMessage(player);
+                            return;
+                        }
+                        if (type == GUIClickType.Right) {
+                            cleanup.handleSetOriginalOwner(plugin, player, entry.getResName(), "clear", null, false, reopenManage);
+                            return;
+                        }
+                        player.closeInventory();
+                        pendingEdits.put(player.getUniqueId(),
+                                new PendingEdit(entry.getServerName(), entry.getResName(), EditField.ORIGINAL_OWNER, true, reopenManage));
+                        lm.Gui_Msg_OriginalOwnerPrompt.sendMessage(player, entry.getResName());
+                    }
+                });
+            }
+
             // Slot 25: Delete Residence (with Confirmation GUI)
             gui.addButton(new CMIGuiButton(25, buildControlItem(
                     CMIMaterial.BARRIER,
@@ -577,8 +833,8 @@ public class ResidenceListGui implements Listener {
                 @Override
                 public void click(GUIClickType type) {
                     openDeleteConfirmGui(player, localRes, resadmin, reopenManage, () -> {
-                        if (player.isOnline()) {
-                            openBrowser(player, backFilter, backSort, backServer, backOwnerFilter, backOwnerName, resadmin, backPage);
+                        if (player.isOnline() && backToBrowser != null) {
+                            backToBrowser.run();
                         }
                     });
                 }
@@ -592,7 +848,11 @@ public class ResidenceListGui implements Listener {
                 lm.Gui_Button_Back_Name.getMessage())) {
             @Override
             public void click(GUIClickType type) {
-                openBrowser(player, backFilter, backSort, backServer, backOwnerFilter, backOwnerName, resadmin, backPage);
+                if (backToBrowser != null) {
+                    backToBrowser.run();
+                } else {
+                    player.closeInventory();
+                }
             }
         });
 
@@ -1106,9 +1366,35 @@ public class ResidenceListGui implements Listener {
         return lm.Gui_Entry_Owner.getMessage(ownerName);
     }
 
+    private String formatLastSeenLoreLine(RemoteResidenceEntry entry, boolean includeTime) {
+        if (entry == null || plugin.getCrossServerManager() == null)
+            return null;
+        CleanupReclaimManager reclaim = plugin.getCleanupReclaimManager();
+        if (reclaim != null && reclaim.isArchivedHolder(entry.getOwnerName())) {
+            ReclaimEntry arc = reclaim.getArchivedEntry(entry.getServerName(), entry.getResName(), entry.getResUuid());
+            if (arc != null && arc.getOriginalOwnerUuid() != null) {
+                return lm.Gui_Entry_OriginalLastSeen.getMessage(
+                        plugin.getCrossServerManager().formatLastSeenValue(arc.getOriginalOwnerUuid(), includeTime));
+            }
+            return lm.Gui_Entry_OriginalLastSeen.getMessage(lm.Gui_Manage_OriginalOwnerUnset.getMessage());
+        }
+        if (entry.getOwnerUuid() != null
+                && !entry.getOwnerUuid().equals(plugin.getServerUUID())
+                && !entry.getOwnerName().equalsIgnoreCase("Server Land")
+                && !entry.getOwnerName().equalsIgnoreCase(plugin.getServerLandName())) {
+            return lm.Gui_Entry_LastSeen.getMessage(
+                    plugin.getCrossServerManager().formatLastSeenValue(entry.getOwnerUuid(), includeTime));
+        }
+        return null;
+    }
+
     private List<String> buildResidenceInfoLore(RemoteResidenceEntry entry, ClaimedResidence localRes) {
         List<String> lore = new ArrayList<>();
         lore.add(formatOwnerLoreLine(entry.getServerName(), entry.getResName(), entry.getResUuid(), entry.getOwnerName()));
+        String seenLine = formatLastSeenLoreLine(entry, true);
+        if (seenLine != null) {
+            lore.add(seenLine);
+        }
         lore.add(lm.Gui_Entry_World.getMessage(
                 entry.getWorldName(),
                 (int) Math.floor(entry.getTpX()),
@@ -1134,12 +1420,18 @@ public class ResidenceListGui implements Listener {
     }
 
     public List<RemoteResidenceEntry> collectFilteredEntries(Player player, FilterMode filter, SortMode sort, String serverFilter, boolean resadmin) {
-        return collectFilteredEntries(player, filter, sort, serverFilter, null, resadmin);
+        return collectFilteredEntries(player, filter, sort, serverFilter, null, false, resadmin);
     }
 
     public List<RemoteResidenceEntry> collectFilteredEntries(Player player, FilterMode filter, SortMode sort, String serverFilter, UUID ownerFilter, boolean resadmin) {
+        return collectFilteredEntries(player, filter, sort, serverFilter, ownerFilter, false, resadmin);
+    }
+
+    public List<RemoteResidenceEntry> collectFilteredEntries(
+            Player player, FilterMode filter, SortMode sort, String serverFilter, UUID ownerFilter, boolean archivedHolderOnly, boolean resadmin) {
         CrossServerManager csm = plugin.getCrossServerManager();
         ResidenceGuiMetaManager metaMgr = plugin.getGuiMetaManager();
+        CleanupReclaimManager reclaim = plugin.getCleanupReclaimManager();
         UUID viewerUuid = player.getUniqueId();
         boolean includeCross = csm != null && csm.isEnabled() && plugin.getConfigManager().isResidenceGuiShowCrossServer();
 
@@ -1154,11 +1446,28 @@ public class ResidenceListGui implements Listener {
 
             boolean isOwner = entry.isOwner(viewerUuid);
             boolean isPinned = metaMgr != null && metaMgr.isPinned(viewerUuid, entry.getServerName(), entry.getResName());
+            boolean isEntryArchived = reclaim != null && reclaim.isArchivedHolder(entry.getOwnerName());
+
+            if (archivedHolderOnly) {
+                if (!isEntryArchived)
+                    continue;
+                if (!resadmin && (entry.isHidden() || !entry.isListed()))
+                    continue;
+                filtered.add(entry);
+                continue;
+            }
 
             if (ownerFilter != null) {
-                if (!entry.isOwner(ownerFilter))
+                boolean matchesOwner = entry.isOwner(ownerFilter);
+                boolean matchesArchivedOrig = false;
+                if (!matchesOwner && isEntryArchived) {
+                    ReclaimEntry arc = reclaim.getArchivedEntry(entry.getServerName(), entry.getResName(), entry.getResUuid());
+                    matchesArchivedOrig = arc != null && ownerFilter.equals(arc.getOriginalOwnerUuid());
+                }
+                if (!matchesOwner && !matchesArchivedOrig)
                     continue;
-                if (!resadmin && !isOwner && (entry.isHidden() || !entry.isListed()))
+                boolean viewerIsTarget = viewerUuid.equals(ownerFilter);
+                if (!resadmin && !isOwner && !viewerIsTarget && (entry.isHidden() || !entry.isListed()))
                     continue;
                 filtered.add(entry);
                 continue;
@@ -1166,8 +1475,15 @@ public class ResidenceListGui implements Listener {
 
             switch (filter) {
             case MINE:
-                if (!isOwner)
-                    continue;
+                if (!isOwner) {
+                    if (isEntryArchived) {
+                        ReclaimEntry arc = reclaim.getArchivedEntry(entry.getServerName(), entry.getResName(), entry.getResUuid());
+                        if (arc == null || !viewerUuid.equals(arc.getOriginalOwnerUuid()))
+                            continue;
+                    } else {
+                        continue;
+                    }
+                }
                 break;
             case PINNED:
                 if (!isPinned)
@@ -1243,6 +1559,10 @@ public class ResidenceListGui implements Listener {
                 lore.add(lm.Gui_Entry_Id.getMessage(entry.getResName()));
             }
             lore.add(formatOwnerLoreLine(entry.getServerName(), entry.getResName(), entry.getResUuid(), entry.getOwnerName()));
+            String seenLine = formatLastSeenLoreLine(entry, false);
+            if (seenLine != null) {
+                lore.add(seenLine);
+            }
             if (showCross) {
                 String tag = entry.isLocal() ? lm.Gui_Server_Current.getMessage() : lm.Gui_Server_Remote.getMessage();
                 lore.add(lm.Gui_Entry_Server.getMessage(serverLabel, tag));
@@ -1295,6 +1615,288 @@ public class ResidenceListGui implements Listener {
             stack.setItemMeta(meta);
         }
         return stack;
+    }
+
+    private ItemStack buildBatchEntryItem(Player viewer, RemoteResidenceEntry entry, boolean isSelected) {
+        boolean showCross = plugin.getCrossServerManager() != null && plugin.getCrossServerManager().isEnabled();
+        CMIMaterial iconMat = resolveIconMaterial(entry.getIcon());
+        ItemStack stack = iconMat.newItemStack();
+        ItemMeta meta = stack.getItemMeta();
+        if (meta != null) {
+            String prefix = isSelected ? lm.Gui_Batch_SelectedPrefix.getMessage() : "&e";
+            String serverLabel = showCross ? displayServerName(entry.getServerName()) : "";
+            String serverSuffix = showCross ? " &8[&b" + serverLabel + "&8]" : "";
+            meta.setDisplayName(CMIChatColor.translate(prefix + entry.getDisplayName() + serverSuffix));
+
+            List<String> lore = new ArrayList<>();
+            if (entry.getAlias() != null && !entry.getAlias().equalsIgnoreCase(entry.getResName())) {
+                lore.add(lm.Gui_Entry_Id.getMessage(entry.getResName()));
+            }
+            lore.add(formatOwnerLoreLine(entry.getServerName(), entry.getResName(), entry.getResUuid(), entry.getOwnerName()));
+            String seenLine = formatLastSeenLoreLine(entry, false);
+            if (seenLine != null) {
+                lore.add(seenLine);
+            }
+            lore.add(lm.Gui_Entry_World.getMessage(
+                    entry.getWorldName(),
+                    (int) Math.floor(entry.getTpX()),
+                    (int) Math.floor(entry.getTpY()),
+                    (int) Math.floor(entry.getTpZ())));
+
+            ClaimedResidence localRes = entry.isLocal() ? plugin.getResidenceManager().getByName(entry.getResName()) : null;
+            String hiddenVal;
+            if (localRes != null) {
+                Boolean rawHidden = localRes.getPermissions().getFlags().get(Flags.hidden.toString());
+                hiddenVal = rawHidden == null ? lm.General_Removed.getMessage()
+                        : (rawHidden ? lm.General_True.getMessage() : lm.General_False.getMessage());
+            } else {
+                hiddenVal = entry.isHidden() ? lm.General_True.getMessage() : lm.General_False.getMessage();
+            }
+            lore.add("");
+            lore.add(lm.Gui_Entry_FlagHiddenState.getMessage(hiddenVal));
+            String statusStr = (entry.isListed() && !entry.isHidden())
+                    ? lm.Gui_Entry_StatusPublic.getMessage()
+                    : lm.Gui_Entry_StatusHidden.getMessage();
+            lore.add(lm.Gui_Entry_Status.getMessage(statusStr));
+
+            lore.add("");
+            if (entry.isLocal()) {
+                lore.add(lm.Gui_Batch_CardLeftSelect.getMessage());
+                lore.add(lm.Gui_Batch_CardRightTp.getMessage());
+                lore.add(lm.Gui_Batch_CardShiftManage.getMessage());
+            } else {
+                lore.add(lm.Gui_Batch_CardRemoteNotice.getMessage(displayServerName(entry.getServerName())));
+                lore.add(lm.Gui_Batch_CardRightTp.getMessage());
+            }
+
+            List<String> colored = new ArrayList<>(lore.size());
+            for (String line : lore) {
+                colored.add(CMIChatColor.translate(line));
+            }
+            meta.setLore(colored);
+            if (isSelected && CMIEnchantEnum.UNBREAKING.getEnchantment() != null) {
+                meta.addEnchant(CMIEnchantEnum.UNBREAKING.getEnchantment(), 1, true);
+            }
+            meta.addItemFlags(ItemFlag.values());
+            stack.setItemMeta(meta);
+        }
+        return stack;
+    }
+
+    public void openBatchFlagPickerGui(Player player, int page, Runnable backAction) {
+        if (player == null || !player.isOnline() || !canUseAdminBatch(player, true))
+            return;
+
+        Set<String> selectedKeys = getOrCreateBatchSelection(player.getUniqueId());
+        List<ClaimedResidence> selectedResidences = resolveSelectedLocalResidences(selectedKeys);
+        if (selectedResidences.isEmpty()) {
+            lm.Gui_Batch_Msg_NoneSelected.sendMessage(player);
+            if (backAction != null)
+                backAction.run();
+            return;
+        }
+
+        List<String> flagNames = new ArrayList<>();
+        Map<String, Boolean> globalFlags = plugin.getPermissionManager().getAllFlags().getFlags();
+        for (String fname : globalFlags.keySet()) {
+            if ("admin".equalsIgnoreCase(fname))
+                continue;
+            Flags f = Flags.getFlag(fname);
+            if (f != null && !f.isGlobalyEnabled())
+                continue;
+            flagNames.add(fname);
+        }
+        flagNames.sort(String.CASE_INSENSITIVE_ORDER);
+
+        int maxPages = Math.max(1, (flagNames.size() + 44) / 45);
+        int safePage = Math.max(1, Math.min(page, maxPages));
+        PageInfo pi = new PageInfo(45, flagNames.size(), safePage);
+
+        CMIGui gui = new CMIGui(player) {
+            @Override
+            public void pageChange(int newPage) {
+                openBatchFlagPickerGui(player, newPage, backAction);
+            }
+        };
+        gui.setTitle(lm.Gui_Batch_Picker_Title.getMessage(selectedResidences.size(), pi.getCurrentPage(), Math.max(1, pi.getTotalPages())));
+        gui.setInvSize(GUIRows.r6);
+
+        int slot = 0;
+        for (String flagKey : flagNames) {
+            if (pi.isContinue())
+                continue;
+            if (pi.isBreak())
+                break;
+
+            final String targetFlag = flagKey;
+            ItemStack flagItem = buildBatchFlagPickerItem(targetFlag, selectedResidences);
+            CMIGuiButton btn = new CMIGuiButton(slot++, flagItem) {
+                @Override
+                public void click(GUIClickType type) {
+                    FlagState targetState;
+                    if (type == GUIClickType.Left) {
+                        targetState = FlagState.TRUE;
+                    } else if (type == GUIClickType.Right) {
+                        targetState = FlagState.FALSE;
+                    } else {
+                        targetState = FlagState.NEITHER;
+                    }
+                    applyBatchFlagOnMain(player, selectedKeys, targetFlag, targetState);
+                    openBatchFlagPickerGui(player, pi.getCurrentPage(), backAction);
+                }
+            };
+            btn.hideItemFlags();
+            gui.addButton(btn);
+        }
+
+        // Slot 46: Back to Batch Browser
+        gui.addButton(new CMIGuiButton(46, buildControlItem(
+                CMIMaterial.ARROW,
+                lm.Gui_Button_Back_Name.getMessage())) {
+            @Override
+            public void click(GUIClickType type) {
+                if (backAction != null)
+                    backAction.run();
+                else
+                    player.closeInventory();
+            }
+        });
+
+        gui.addPagination(pi);
+        gui.fillEmptyButtons();
+        gui.open();
+    }
+
+    private ItemStack buildBatchFlagPickerItem(String flagKey, List<ClaimedResidence> selectedResidences) {
+        int trueCount = 0;
+        int falseCount = 0;
+        int unsetCount = 0;
+        for (ClaimedResidence res : selectedResidences) {
+            Boolean v = res.getPermissions().getFlags().get(flagKey);
+            if (v == null)
+                unsetCount++;
+            else if (v)
+                trueCount++;
+            else
+                falseCount++;
+        }
+
+        FlagState dominant = FlagState.NEITHER;
+        if (!selectedResidences.isEmpty() && trueCount == selectedResidences.size()) {
+            dominant = FlagState.TRUE;
+        } else if (!selectedResidences.isEmpty() && falseCount == selectedResidences.size()) {
+            dominant = FlagState.FALSE;
+        }
+
+        ItemStack stack = plugin.getConfigManager().getGuiBottonStates(dominant).clone();
+        FlagData flagData = plugin.getFlagUtilManager().getFlagData();
+        if (flagData != null && flagData.contains(flagKey)) {
+            stack = flagData.getItem(flagKey).clone();
+        }
+
+        Flags flagEnum = Flags.getFlag(flagKey);
+        String displayKey = flagEnum != null ? flagEnum.getName() : flagKey;
+        ConfigurationSection customLocale = flagEnum == null ? plugin.getLocaleManager().getFlagLocale(displayKey) : null;
+
+        ItemMeta meta = stack.getItemMeta();
+        if (meta != null) {
+            String translated = customLocale == null ? null : customLocale.getString("Translated");
+            if (translated != null) {
+                meta.setDisplayName(CMIChatColor.translate(lm.Gui_Flag_NameColor.getMessage() + translated));
+            } else {
+                meta.setDisplayName(CMIChatColor.translate(lm.Gui_Flag_NameColor.getMessage() + CMIText.firstToUpperCase(displayKey)));
+            }
+
+            List<String> lore = new ArrayList<>();
+            lore.add(CMIChatColor.translate(lm.Gui_Batch_Picker_Stats.getMessage(trueCount, falseCount, unsetCount)));
+            if (flagEnum != null && flagEnum.getDesc() != null && !flagEnum.getDesc().isEmpty()) {
+                int words = 0;
+                StringBuilder line = new StringBuilder();
+                for (String w : flagEnum.getDesc().split(" ")) {
+                    line.append(w).append(" ");
+                    if (++words > 5) {
+                        lore.add(ChatColor.YELLOW + line.toString().trim());
+                        line.setLength(0);
+                        words = 0;
+                    }
+                }
+                if (line.length() > 0) {
+                    lore.add(ChatColor.YELLOW + line.toString().trim());
+                }
+            } else if (customLocale != null && customLocale.getString("Description") != null) {
+                lore.add(CMIChatColor.translate("&e" + customLocale.getString("Description")));
+            }
+            lore.add("");
+            for (String act : lm.Gui_Actions.getMessageList()) {
+                lore.add(CMIChatColor.translate(act));
+            }
+            meta.setLore(lore);
+            if (dominant == FlagState.TRUE && CMIEnchantEnum.UNBREAKING.getEnchantment() != null) {
+                meta.addEnchant(CMIEnchantEnum.UNBREAKING.getEnchantment(), 1, true);
+            }
+            meta.addItemFlags(ItemFlag.values());
+            stack.setItemMeta(meta);
+        }
+        return stack;
+    }
+
+    private List<ClaimedResidence> resolveSelectedLocalResidences(Set<String> selectedKeys) {
+        if (selectedKeys == null || selectedKeys.isEmpty())
+            return Collections.emptyList();
+        List<ClaimedResidence> out = new ArrayList<>();
+        List<String> stale = new ArrayList<>();
+        for (String key : new ArrayList<>(selectedKeys)) {
+            ClaimedResidence res = plugin.getResidenceManager().getByName(key);
+            if (res == null) {
+                stale.add(key);
+            } else {
+                out.add(res);
+            }
+        }
+        if (!stale.isEmpty()) {
+            selectedKeys.removeAll(stale);
+        }
+        return out;
+    }
+
+    private void applyBatchFlagOnMain(Player admin, Set<String> selectedKeys, String flagName, FlagState state) {
+        if (!canUseAdminBatch(admin, true)) {
+            lm.General_AdminOnly.sendMessage(admin);
+            return;
+        }
+        List<ClaimedResidence> targets = resolveSelectedLocalResidences(selectedKeys);
+        if (targets.isEmpty()) {
+            lm.Gui_Batch_Msg_NoneSelected.sendMessage(admin);
+            return;
+        }
+
+        int applied = 0;
+        int skippedFrozen = 0;
+        for (ClaimedResidence res : targets) {
+            if (plugin.getAuctionManager() != null && plugin.getAuctionManager().isResidenceInAuction(res)) {
+                skippedFrozen++;
+                continue;
+            }
+            if (res.getPermissions().setFlag(admin, flagName, state, true, false)) {
+                applied++;
+            }
+        }
+
+        if (applied > 0) {
+            plugin.saveResidenceDataNow();
+            if (plugin.getCrossServerManager() != null && plugin.getCrossServerManager().isEnabled()) {
+                plugin.getCrossServerManager().triggerAsyncSync();
+            }
+            if (plugin.getConfigManager().isConsoleLogsShowFlagChanges()) {
+                lm.consoleMessage(admin.getName() + " batch-applied flag " + flagName + "=" + state.getName()
+                        + " to " + applied + " residence(s).");
+            }
+        }
+
+        String stateLabel = state == FlagState.TRUE ? lm.General_True.getMessage()
+                : (state == FlagState.FALSE ? lm.General_False.getMessage() : lm.General_Removed.getMessage());
+        String skippedSuffix = skippedFrozen > 0 ? lm.Gui_Batch_Msg_SkippedFrozen.getMessage(skippedFrozen) : "";
+        lm.Gui_Batch_Msg_Applied.sendMessage(admin, flagName, stateLabel, applied, skippedSuffix);
     }
 
     private RemoteResidenceEntry refreshEntry(RemoteResidenceEntry old) {
@@ -1465,6 +2067,15 @@ public class ResidenceListGui implements Listener {
                 return;
             }
 
+            if (edit.field == EditField.ORIGINAL_OWNER) {
+                if (!canUseAdminBatch(player, edit.resadmin)) {
+                    lm.General_AdminOnly.sendMessage(player);
+                    return;
+                }
+                cleanup.handleSetOriginalOwner(plugin, player, edit.resName, msg, null, false, edit.reopenCallback);
+                return;
+            }
+
             if (edit.field == EditField.ADD_MEMBER) {
                 ClaimedResidence liveRes = plugin.getResidenceManager().getByName(edit.resName);
                 if (liveRes == null) {
@@ -1508,6 +2119,9 @@ public class ResidenceListGui implements Listener {
                     lm.Gui_Msg_DescUpdated.sendMessage(player, edit.resName, value);
             }
             plugin.getGuiMetaManager().updateMetadata(edit.serverName, edit.resName, meta);
+            if (edit.reopenCallback != null && player.isOnline()) {
+                edit.reopenCallback.run();
+            }
         }, null);
     }
 
@@ -1531,5 +2145,6 @@ public class ResidenceListGui implements Listener {
     @EventHandler
     public void onQuit(PlayerQuitEvent event) {
         pendingEdits.remove(event.getPlayer().getUniqueId());
+        batchSelections.remove(event.getPlayer().getUniqueId());
     }
 }

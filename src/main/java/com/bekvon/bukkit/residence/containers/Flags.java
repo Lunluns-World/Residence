@@ -99,6 +99,7 @@ public enum Flags {
     monsters(CMIMaterial.SPAWNER, FlagMode.Residence, "Allows or denys monster spawns", true),
     move(CMIMaterial.LEATHER_BOOTS, FlagMode.Both, "Allows or denys movement in the residence", true),
     nametag(CMIMaterial.NAME_TAG, FlagMode.Both, "Allows or denys name tag usage", true),
+    neighbor(CMIMaterial.OAK_FENCE_GATE, FlagMode.Both, "Allows players to create or expand residences closer than the minimum gap", true),
     nanimals(CMIMaterial.COW_SPAWN_EGG, FlagMode.Residence, "Allows or denys natural animal spawns", true),
     nmonsters(CMIMaterial.SKELETON_SPAWN_EGG, FlagMode.Residence, "Allows or denys natural monster spawns", true),
     night(CMIMaterial.BLACK_WOOL, FlagMode.Residence, "Sets night time in residence", true),

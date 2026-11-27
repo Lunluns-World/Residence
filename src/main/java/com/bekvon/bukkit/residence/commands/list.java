@@ -29,6 +29,7 @@ public class list implements cmd {
 
         boolean forceText = false;
         boolean forceGui = false;
+        boolean forceBatch = false;
         List<String> filteredArgs = new ArrayList<>();
         for (String arg : args) {
             if (arg.equalsIgnoreCase("text")) {
@@ -39,7 +40,21 @@ public class list implements cmd {
                 forceGui = true;
                 continue;
             }
+            if (arg.equalsIgnoreCase("batch")) {
+                forceBatch = true;
+                continue;
+            }
             filteredArgs.add(arg);
+        }
+
+        if (forceBatch && sender instanceof Player) {
+            Player player = (Player) sender;
+            if (!plugin.getConfigManager().isResidenceGuiEnabled()) {
+                lm.Gui_Disabled.sendMessage(player);
+                return true;
+            }
+            plugin.getResidenceListGui().openBatchBrowser(player, FilterMode.ALL, SortMode.DEFAULT, null, resadmin, 1);
+            return true;
         }
 
         if (sender instanceof Player && !forceText) {
@@ -69,12 +84,15 @@ public class list implements cmd {
                             lm.General_NoCmdPermission.sendMessage(sender);
                             return true;
                         }
-                        if (targetInfo.isSame(sender)) {
+                        if (targetInfo.isArchivedHolderTarget()) {
+                            plugin.getResidenceListGui().openBrowserForArchivedHolder(
+                                    player, targetInfo.getTargetName(), resadmin, 1);
+                        } else if (targetInfo.isSame(sender)) {
                             plugin.getResidenceListGui().openBrowser(player, FilterMode.MINE, SortMode.DEFAULT, null, resadmin, 1);
                         } else {
-                            String resolvedName = com.bekvon.bukkit.residence.containers.ResidencePlayer.getName(targetInfo.getUniqueId());
+                            String resolvedName = targetInfo.getTargetName() != null ? targetInfo.getTargetName() : single;
                             plugin.getResidenceListGui().openBrowserForOwner(player, targetInfo.getUniqueId(),
-                                    resolvedName != null ? resolvedName : single, resadmin, 1);
+                                    resolvedName, resadmin, 1);
                         }
                         return true;
                     }
@@ -129,7 +147,11 @@ public class list implements cmd {
             return true;
         }
 
-        plugin.getResidenceManager().listResidences(sender, info.getUniqueId(), page, false, false, resadmin, world);
+        if (info.isArchivedHolderTarget()) {
+            plugin.getResidenceManager().listArchivedResidences(sender, info.getTargetName(), page, resadmin, world);
+        } else {
+            plugin.getResidenceManager().listResidences(sender, info.getUniqueId(), page, false, false, resadmin, world);
+        }
 
         return true;
     }
@@ -138,11 +160,10 @@ public class list implements cmd {
     public void getLocale() {
         ConfigReader c = Residence.getInstance().getLocaleManager().getLocaleConfig();
         c.get("Description", "List Residences");
-        c.get("Info", Arrays.asList("&eUsage: &6/res list [text|gui] <player> <page> <worldName>",
+        c.get("Info", Arrays.asList("&eUsage: &6/res list [text|gui|batch] <player> <page> <worldName>",
                 "Opens the Residence GUI (or uses classic chat text with 'text').",
-                "Lists all the residences a player owns (except hidden ones).",
-                "If listing your own residences, shows hidden ones as well.",
-                "To list everyones residences, use /res listall."));
-        LocaleManager.addTabCompleteMain(this, "text%%gui%%[playername]", "[worldname]");
+                "Lists all the residences a player owns (including archived custody residences).",
+                "Admins can use 'batch' (or right-click Refresh in GUI) to batch-edit /res set flags."));
+        LocaleManager.addTabCompleteMain(this, "text%%gui%%batch%%[playername]", "[worldname]");
     }
 }

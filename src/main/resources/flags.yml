@@ -294,6 +294,9 @@ Global:
     # Applies to: Both
     # Allows or denys name tag usage
     nametag: true
+    # Applies to: Both
+    # Allows players to create or expand residences closer than the minimum gap
+    neighbor: true
     # Applies to: Residence
     # Allows or denys natural animal spawns
     nanimals: true
@@ -554,6 +557,7 @@ Global:
     monsters: SPAWNER
     move: LEATHER_BOOTS
     nametag: NAME_TAG
+    neighbor: OAK_FENCE_GATE
     nanimals: COW_SPAWN_EGG
     night: BLACK_WOOL
     nmonsters: SKELETON_SPAWN_EGG

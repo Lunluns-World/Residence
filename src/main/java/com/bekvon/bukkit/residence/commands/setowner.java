@@ -47,11 +47,22 @@ public class setowner implements cmd {
             return null;
         }
 
-        if (!plugin.getPlayerManager().isPlayerExist(sender, args[1], true)) {
+        boolean isSpecialTarget = args[1].equalsIgnoreCase("Server Land")
+                || args[1].equalsIgnoreCase(plugin.getServerLandName())
+                || (plugin.getCleanupReclaimManager() != null && plugin.getCleanupReclaimManager().isArchivedHolder(args[1]));
+        if (!isSpecialTarget && !plugin.getPlayerManager().isPlayerExist(sender, args[1], true)) {
             return null;
         }
 
+        boolean wasArchived = plugin.getCleanupReclaimManager() != null
+                && plugin.getCleanupReclaimManager().isArchivedHolder(area.getOwner());
+        boolean nowArchived = plugin.getCleanupReclaimManager() != null
+                && plugin.getCleanupReclaimManager().isArchivedHolder(args[1]);
+
         area.getPermissions().setOwner(args[1], !keepFlags);
+        if (wasArchived && !nowArchived && plugin.getCleanupReclaimManager() != null) {
+            plugin.getCleanupReclaimManager().removeArchivedRecord(area);
+        }
         if (plugin.getRentManager().isForRent(area))
             plugin.getRentManager().removeRentable(area);
         if (plugin.getTransactionManager().isForSale(area))

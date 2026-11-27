@@ -34,6 +34,9 @@ public class clearflags implements cmd {
             lm.Raid_cantDo.sendMessage(sender);
             return null;
         }
+        if (plugin.getAuditManager() != null) {
+            plugin.getAuditManager().captureBeforeMutation(sender, area, com.bekvon.bukkit.residence.audit.AuditAction.FLAG);
+        }
         area.getPermissions().clearFlags();
         lm.Flag_Cleared.sendMessage(sender);
 

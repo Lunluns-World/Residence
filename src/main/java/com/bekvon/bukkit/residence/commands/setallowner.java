@@ -38,7 +38,10 @@ public class setallowner implements cmd {
                 keepFlags = false;
         }
 
-        if (!plugin.getPlayerManager().isPlayerExist(sender, newOwner, true)) {
+        boolean isSpecialTarget = newOwner.equalsIgnoreCase("Server Land")
+                || newOwner.equalsIgnoreCase(plugin.getServerLandName())
+                || (plugin.getCleanupReclaimManager() != null && plugin.getCleanupReclaimManager().isArchivedHolder(newOwner));
+        if (!isSpecialTarget && !plugin.getPlayerManager().isPlayerExist(sender, newOwner, true)) {
             return null;
         }
 

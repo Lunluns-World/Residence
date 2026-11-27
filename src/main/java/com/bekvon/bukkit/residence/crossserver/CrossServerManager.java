@@ -4,15 +4,19 @@ import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.sql.SQLException;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 
@@ -22,14 +26,19 @@ import org.bukkit.entity.Player;
 
 import com.bekvon.bukkit.residence.Residence;
 import com.bekvon.bukkit.residence.containers.Flags;
+import com.bekvon.bukkit.residence.containers.ResidencePlayer;
 import com.bekvon.bukkit.residence.containers.lm;
 import com.bekvon.bukkit.residence.gui.ResidenceGuiMetaManager;
 import com.bekvon.bukkit.residence.gui.ResidenceGuiMetadata;
 import com.bekvon.bukkit.residence.protection.ClaimedResidence;
 import com.bekvon.bukkit.residence.protection.CuboidArea;
 import com.bekvon.bukkit.residence.protection.FlagPermissions.FlagCombo;
+import com.bekvon.bukkit.residence.protection.PlayerManager;
+import com.bekvon.bukkit.residence.storage.CleanupReclaimManager;
+import com.bekvon.bukkit.residence.storage.CleanupReclaimManager.ReclaimEntry;
 import com.bekvon.bukkit.residence.storage.DatabaseStorageManager;
 import com.bekvon.bukkit.residence.storage.DatabaseStorageManager.PendingTeleport;
+import com.bekvon.bukkit.residence.storage.DatabaseStorageManager.PlayerActivityRecord;
 import com.bekvon.bukkit.residence.storage.DatabaseStorageManager.ReservationResult;
 
 import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
@@ -39,6 +48,9 @@ public class CrossServerManager {
 
     private final Residence plugin;
     private volatile Map<String, RemoteResidenceEntry> remoteCache = Collections.emptyMap();
+    private final ConcurrentHashMap<UUID, Long> cachedPlayerLastSeen = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<UUID, String> cachedPlayerNames = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, UUID> cachedUuidByLowerName = new ConcurrentHashMap<>();
     private ScheduledTask syncTask = null;
     private String registeredChannel = null;
 
@@ -74,6 +86,7 @@ public class CrossServerManager {
         Bukkit.getAsyncScheduler().runNow(plugin, task -> {
             if (plugin.getGuiMetaManager() != null)
                 plugin.getGuiMetaManager().refreshFromDatabaseNow();
+            refreshPlayerActivityCacheNow();
             syncLocalIndexNow();
             refreshRemoteCacheNow();
         });
@@ -83,7 +96,12 @@ public class CrossServerManager {
         if (bus != null) {
             bus.addListener((topic, payload) -> {
                 if (RedisSyncBus.TOPIC_RESIDENCE_INDEX.equals(topic) && isEnabled()) {
-                    Bukkit.getAsyncScheduler().runNow(plugin, t -> refreshRemoteCacheNow());
+                    Bukkit.getAsyncScheduler().runNow(plugin, t -> {
+                        refreshPlayerActivityCacheNow();
+                        refreshRemoteCacheNow();
+                    });
+                } else if (RedisSyncBus.TOPIC_CLEANUP_RECLAIM.equals(topic) && isEnabled()) {
+                    Bukkit.getAsyncScheduler().runNow(plugin, t -> refreshPlayerActivityCacheNow());
                 }
             });
         }
@@ -98,6 +116,7 @@ public class CrossServerManager {
                 plugin.getCleanupReclaimManager().refreshCacheFromDatabaseNow();
                 plugin.getCleanupReclaimManager().reconcileCrossServerReturnsNow();
             }
+            refreshPlayerActivityCacheNow();
             syncLocalIndexNow();
             refreshRemoteCacheNow();
         }, intervalSeconds, intervalSeconds, TimeUnit.SECONDS);
@@ -128,6 +147,17 @@ public class CrossServerManager {
 
     public void refreshAsyncThen(Runnable mainThreadCallback) {
         if (!isEnabled()) {
+            DatabaseStorageManager db = plugin.getDatabaseStorageManager();
+            if (db != null && db.isInitialized()) {
+                Bukkit.getAsyncScheduler().runNow(plugin, task -> {
+                    refreshPlayerActivityCacheNow();
+                    if (plugin.getCleanupReclaimManager() != null)
+                        plugin.getCleanupReclaimManager().refreshCacheFromDatabaseNow();
+                    if (mainThreadCallback != null)
+                        Bukkit.getGlobalRegionScheduler().execute(plugin, mainThreadCallback);
+                });
+                return;
+            }
             if (mainThreadCallback != null)
                 mainThreadCallback.run();
             return;
@@ -135,6 +165,9 @@ public class CrossServerManager {
         Bukkit.getAsyncScheduler().runNow(plugin, task -> {
             if (plugin.getGuiMetaManager() != null)
                 plugin.getGuiMetaManager().refreshFromDatabaseNow();
+            if (plugin.getCleanupReclaimManager() != null)
+                plugin.getCleanupReclaimManager().refreshCacheFromDatabaseNow();
+            refreshPlayerActivityCacheNow();
             syncLocalIndexNow();
             refreshRemoteCacheNow();
             if (mainThreadCallback != null) {
@@ -262,10 +295,32 @@ public class CrossServerManager {
     public List<RemoteResidenceEntry> getRemoteResidencesByOwner(UUID ownerUuid) {
         if (ownerUuid == null)
             return Collections.emptyList();
+        CleanupReclaimManager reclaimMgr = plugin.getCleanupReclaimManager();
         List<RemoteResidenceEntry> result = new ArrayList<>();
         for (RemoteResidenceEntry entry : remoteCache.values()) {
-            if (ownerUuid.equals(entry.getOwnerUuid()))
+            if (ownerUuid.equals(entry.getOwnerUuid())) {
                 result.add(entry);
+                continue;
+            }
+            if (reclaimMgr != null && reclaimMgr.isArchivedHolder(entry.getOwnerName())) {
+                ReclaimEntry archived = reclaimMgr.getArchivedEntry(entry.getServerName(), entry.getResName(), entry.getResUuid());
+                if (archived != null && ownerUuid.equals(archived.getOriginalOwnerUuid())) {
+                    result.add(entry);
+                }
+            }
+        }
+        return result;
+    }
+
+    public List<RemoteResidenceEntry> getRemoteArchivedResidences() {
+        CleanupReclaimManager reclaimMgr = plugin.getCleanupReclaimManager();
+        if (reclaimMgr == null)
+            return Collections.emptyList();
+        List<RemoteResidenceEntry> result = new ArrayList<>();
+        for (RemoteResidenceEntry entry : remoteCache.values()) {
+            if (reclaimMgr.isArchivedHolder(entry.getOwnerName())) {
+                result.add(entry);
+            }
         }
         return result;
     }
@@ -461,15 +516,114 @@ public class CrossServerManager {
         });
     }
 
-    public void recordPlayerActivityAsync(Player player) {
-        if (player == null)
+    public void updateCachedPlayerActivity(UUID uuid, String name, long lastSeen) {
+        if (uuid == null || PlayerManager.isTempUUID(uuid))
             return;
+        if (lastSeen > 0L) {
+            cachedPlayerLastSeen.merge(uuid, lastSeen, Math::max);
+        }
+        if (name != null && !name.trim().isEmpty()) {
+            String trimmed = name.trim();
+            cachedPlayerNames.put(uuid, trimmed);
+            cachedUuidByLowerName.put(trimmed.toLowerCase(Locale.ROOT), uuid);
+        }
+    }
+
+    public void updateCachedPlayerActivitiesBatch(Map<UUID, Long> lastSeenMap, Map<UUID, String> namesMap) {
+        if (lastSeenMap != null) {
+            for (Map.Entry<UUID, Long> entry : lastSeenMap.entrySet()) {
+                UUID uuid = entry.getKey();
+                long ts = entry.getValue() == null ? 0L : entry.getValue();
+                String name = namesMap == null ? null : namesMap.get(uuid);
+                updateCachedPlayerActivity(uuid, name, ts);
+            }
+        }
+        if (namesMap != null) {
+            for (Map.Entry<UUID, String> entry : namesMap.entrySet()) {
+                if (lastSeenMap == null || !lastSeenMap.containsKey(entry.getKey())) {
+                    updateCachedPlayerActivity(entry.getKey(), entry.getValue(), 0L);
+                }
+            }
+        }
+    }
+
+    public void refreshPlayerActivityCacheNow() {
         DatabaseStorageManager db = plugin.getDatabaseStorageManager();
         if (db == null || !db.isInitialized())
+            return;
+        try {
+            List<PlayerActivityRecord> records = db.loadAllPlayerActivities();
+            for (PlayerActivityRecord rec : records) {
+                updateCachedPlayerActivity(rec.getPlayerUuid(), rec.getPlayerName(), rec.getLastSeen());
+            }
+        } catch (SQLException ex) {
+            plugin.getLogger().log(Level.WARNING, "Failed to refresh player activity cache from database", ex);
+        }
+    }
+
+    public long resolveEffectiveLastSeen(UUID uuid) {
+        if (uuid == null || uuid.equals(plugin.getServerUUID()) || PlayerManager.isTempUUID(uuid))
+            return 0L;
+        Player online = Bukkit.getPlayer(uuid);
+        if (online != null && online.isOnline())
+            return System.currentTimeMillis();
+        long best = cachedPlayerLastSeen.getOrDefault(uuid, 0L);
+        ResidencePlayer rp = plugin.getPlayerManager().getResidencePlayer(uuid);
+        if (rp != null && rp.getData() != null) {
+            best = Math.max(best, rp.getData().getLastSeen());
+        }
+        return best;
+    }
+
+    public boolean isPlayerOnlineLocal(UUID uuid) {
+        if (uuid == null)
+            return false;
+        Player online = Bukkit.getPlayer(uuid);
+        return online != null && online.isOnline();
+    }
+
+    public String formatLastSeenValue(UUID uuid, boolean includeTime) {
+        if (uuid == null || uuid.equals(plugin.getServerUUID()) || PlayerManager.isTempUUID(uuid)) {
+            return lm.Residence_LastSeenUnknown.getMessage();
+        }
+        if (isPlayerOnlineLocal(uuid)) {
+            return lm.Residence_LastSeenOnline.getMessage();
+        }
+        long ts = resolveEffectiveLastSeen(uuid);
+        if (ts <= 0L) {
+            return lm.Residence_LastSeenUnknown.getMessage();
+        }
+        String pattern = includeTime ? "yyyy-MM-dd HH:mm" : "yyyy-MM-dd";
+        String dateStr = new SimpleDateFormat(pattern).format(new Date(ts));
+        long days = Math.max(0L, (System.currentTimeMillis() - ts) / 86_400_000L);
+        if (days == 0L) {
+            return lm.Residence_LastSeenToday.getMessage(dateStr);
+        }
+        return lm.Residence_LastSeenDaysAgo.getMessage(dateStr, days);
+    }
+
+    public String getCachedPlayerName(UUID uuid) {
+        if (uuid == null)
+            return null;
+        return cachedPlayerNames.get(uuid);
+    }
+
+    public UUID getCachedPlayerUuidByName(String name) {
+        if (name == null || name.trim().isEmpty())
+            return null;
+        return cachedUuidByLowerName.get(name.trim().toLowerCase(Locale.ROOT));
+    }
+
+    public void recordPlayerActivityAsync(Player player) {
+        if (player == null)
             return;
         UUID uuid = player.getUniqueId();
         String name = player.getName();
         long now = System.currentTimeMillis();
+        updateCachedPlayerActivity(uuid, name, now);
+        DatabaseStorageManager db = plugin.getDatabaseStorageManager();
+        if (db == null || !db.isInitialized())
+            return;
         String server = plugin.getStorageServerName();
         if (!plugin.isEnabled()) {
             try {
@@ -489,9 +643,6 @@ public class CrossServerManager {
     }
 
     public void flushOnlinePlayerActivityNow() {
-        DatabaseStorageManager db = plugin.getDatabaseStorageManager();
-        if (db == null || !db.isInitialized())
-            return;
         Map<UUID, Long> lastSeenMap = new java.util.HashMap<>();
         Map<UUID, String> namesMap = new java.util.HashMap<>();
         long now = System.currentTimeMillis();
@@ -503,6 +654,10 @@ public class CrossServerManager {
         }
         if (lastSeenMap.isEmpty())
             return;
+        updateCachedPlayerActivitiesBatch(lastSeenMap, namesMap);
+        DatabaseStorageManager db = plugin.getDatabaseStorageManager();
+        if (db == null || !db.isInitialized())
+            return;
         try {
             db.upsertPlayerActivitiesBatch(lastSeenMap, namesMap, plugin.getStorageServerName());
         } catch (SQLException ex) {
@@ -511,9 +666,6 @@ public class CrossServerManager {
     }
 
     public void seedLocalPlayerActivityNow() {
-        DatabaseStorageManager db = plugin.getDatabaseStorageManager();
-        if (db == null || !db.isInitialized())
-            return;
         Map<UUID, Long> lastSeenMap = new java.util.HashMap<>();
         Map<UUID, String> namesMap = new java.util.HashMap<>();
         long now = System.currentTimeMillis();
@@ -523,23 +675,26 @@ public class CrossServerManager {
             long ts = off.isOnline() ? now : off.getLastPlayed();
             if (ts > 0L) {
                 lastSeenMap.put(off.getUniqueId(), ts);
-                if (off.getName() != null)
-                    namesMap.put(off.getUniqueId(), off.getName());
+            }
+            if (off.getName() != null) {
+                namesMap.put(off.getUniqueId(), off.getName());
             }
         }
-        if (lastSeenMap.isEmpty())
-            return;
-        try {
-            db.upsertPlayerActivitiesBatch(lastSeenMap, namesMap, plugin.getStorageServerName());
-        } catch (SQLException ex) {
-            plugin.getLogger().log(Level.WARNING, "Failed to seed local player activity into database", ex);
-        }
-    }
-
-    public void seedLocalPlayerActivityAsync() {
+        updateCachedPlayerActivitiesBatch(lastSeenMap, namesMap);
         DatabaseStorageManager db = plugin.getDatabaseStorageManager();
         if (db == null || !db.isInitialized())
             return;
+        if (!lastSeenMap.isEmpty()) {
+            try {
+                db.upsertPlayerActivitiesBatch(lastSeenMap, namesMap, plugin.getStorageServerName());
+            } catch (SQLException ex) {
+                plugin.getLogger().log(Level.WARNING, "Failed to seed local player activity into database", ex);
+            }
+        }
+        refreshPlayerActivityCacheNow();
+    }
+
+    public void seedLocalPlayerActivityAsync() {
         Bukkit.getAsyncScheduler().runNow(plugin, task -> seedLocalPlayerActivityNow());
     }
 

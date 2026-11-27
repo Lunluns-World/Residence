@@ -26,11 +26,19 @@ import java.util.logging.Logger;
 
 import org.bukkit.Bukkit;
 import org.bukkit.OfflinePlayer;
+import org.bukkit.entity.Player;
 
 import com.bekvon.bukkit.residence.Residence;
+import com.bekvon.bukkit.residence.containers.ResidencePlayer;
+import com.bekvon.bukkit.residence.crossserver.CrossServerManager;
+import com.bekvon.bukkit.residence.crossserver.RedisSyncBus;
 import com.bekvon.bukkit.residence.economy.rent.RentedLand;
 import com.bekvon.bukkit.residence.protection.ClaimedResidence;
+import com.bekvon.bukkit.residence.protection.PlayerManager;
+import com.bekvon.bukkit.residence.storage.CleanupReclaimManager;
+import com.bekvon.bukkit.residence.storage.CleanupReclaimManager.ReclaimEntry;
 import com.bekvon.bukkit.residence.storage.DatabaseStorageManager;
+import com.bekvon.bukkit.residence.storage.DatabaseStorageManager.PlayerActivityRecord;
 
 /**
  * 外部玩家最後上線時間自動匯入器（透過純反射 Soft-Hook 串接 Plan 與 HuskSync API）。
@@ -71,6 +79,61 @@ public class PlayerActivityImporter {
         boolean isAvailable();
 
         Map<UUID, Long> queryLastSeen(Collection<UUID> uuids);
+
+        default ResolvedIdentity lookupIdentityByName(String playerName) {
+            return null;
+        }
+
+        default String lookupNameByUuid(UUID uuid) {
+            return null;
+        }
+    }
+
+    public static final class ResolvedIdentity {
+        private final UUID uuid;
+        private final String name;
+        private final String source;
+
+        public ResolvedIdentity(UUID uuid, String name, String source) {
+            this.uuid = uuid;
+            this.name = name == null ? "" : name;
+            this.source = source == null ? "" : source;
+        }
+
+        public UUID getUuid() { return uuid; }
+        public String getName() { return name; }
+        public String getSource() { return source; }
+    }
+
+    public static UUID parseFlexibleUuid(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String s = raw.trim();
+        if (s.length() == 36 && s.indexOf('-') > 0) {
+            try {
+                return UUID.fromString(s);
+            } catch (IllegalArgumentException ignored) {
+                return null;
+            }
+        }
+        if (s.length() == 32) {
+            for (int i = 0; i < 32; i++) {
+                char c = s.charAt(i);
+                boolean hex = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+                if (!hex) {
+                    return null;
+                }
+            }
+            String dashed = s.substring(0, 8) + "-" + s.substring(8, 12) + "-"
+                    + s.substring(12, 16) + "-" + s.substring(16, 20) + "-" + s.substring(20);
+            try {
+                return UUID.fromString(dashed);
+            } catch (IllegalArgumentException ignored) {
+                return null;
+            }
+        }
+        return null;
     }
 
     public static final class MissingOwnerTarget {
@@ -205,7 +268,7 @@ public class PlayerActivityImporter {
 
                 ImportReport report = resolveFromProviders(missing, source, dryRun);
 
-                if (!dryRun && !report.getImported().isEmpty() && db != null && db.isInitialized()) {
+                if (!dryRun && !report.getImported().isEmpty()) {
                     Map<UUID, Long> batchTs = new HashMap<>();
                     Map<UUID, String> batchNames = new HashMap<>();
                     for (ImportedEntry entry : report.getImported()) {
@@ -214,7 +277,23 @@ public class PlayerActivityImporter {
                             batchNames.put(entry.getUuid(), entry.getPlayerName());
                         }
                     }
-                    db.upsertPlayerActivitiesBatch(batchTs, batchNames, plugin.getStorageServerName());
+                    if (db != null && db.isInitialized()) {
+                        db.upsertPlayerActivitiesBatch(batchTs, batchNames, plugin.getStorageServerName());
+                    }
+                    if (plugin.getCrossServerManager() != null) {
+                        plugin.getCrossServerManager().updateCachedPlayerActivitiesBatch(batchTs, batchNames);
+                    }
+                    for (Map.Entry<UUID, Long> e : batchTs.entrySet()) {
+                        ResidencePlayer rp = plugin.getPlayerManager().getResidencePlayer(e.getKey());
+                        if (rp != null && rp.getData() != null && e.getValue() > rp.getData().getLastSeen()) {
+                            rp.getData().setLastSeen(e.getValue());
+                            rp.save();
+                        }
+                    }
+                    RedisSyncBus bus = plugin.getRedisSyncBus();
+                    if (bus != null && bus.isEnabled()) {
+                        bus.publish(RedisSyncBus.TOPIC_RESIDENCE_INDEX, plugin.getStorageServerName());
+                    }
                 }
                 future.complete(report);
             } catch (Throwable ex) {
@@ -222,6 +301,338 @@ public class PlayerActivityImporter {
             }
         });
         return future;
+    }
+
+    /**
+     * 非同步解析玩家真實 UUID 與顯示名稱（支援直接 UUID、本機快取、資料庫、Plan、HuskSync、LuckPerms）。
+     * 專供手動設定 Server_Unclaimed 原領地主時，即使舊玩家已被刪除超過 180 天或未曾登入本分流也能定位真實身分。
+     */
+    public CompletableFuture<ResolvedIdentity> resolvePlayerIdentityAsync(String rawInput, String explicitDisplayName) {
+        CompletableFuture<ResolvedIdentity> future = new CompletableFuture<>();
+        if (rawInput == null || rawInput.trim().isEmpty()) {
+            future.complete(null);
+            return future;
+        }
+        String input = rawInput.trim();
+        String overrideName = explicitDisplayName != null && !explicitDisplayName.trim().isEmpty()
+                ? explicitDisplayName.trim()
+                : null;
+
+        UUID parsedUuid = parseFlexibleUuid(input);
+        if (parsedUuid != null) {
+            if (PlayerManager.isTempUUID(parsedUuid) || (plugin != null && parsedUuid.equals(plugin.getServerUUID()))) {
+                future.complete(null);
+                return future;
+            }
+            if (overrideName != null) {
+                future.complete(new ResolvedIdentity(parsedUuid, overrideName, "UUID"));
+                return future;
+            }
+            String localName = resolveKnownNameLocal(parsedUuid);
+            if (localName != null && !localName.isEmpty()) {
+                future.complete(new ResolvedIdentity(parsedUuid, localName, "Local"));
+                return future;
+            }
+            if (plugin == null) {
+                future.complete(new ResolvedIdentity(parsedUuid, parsedUuid.toString().substring(0, 8), "UUID"));
+                return future;
+            }
+            Bukkit.getAsyncScheduler().runNow(plugin, task -> {
+                String foundName = resolveKnownNameAsync(parsedUuid);
+                String finalName = (foundName != null && !foundName.isEmpty()) ? foundName : parsedUuid.toString().substring(0, 8);
+                future.complete(new ResolvedIdentity(parsedUuid, finalName, "UUID"));
+            });
+            return future;
+        }
+
+        // 先在主執行緒嘗試本機與記憶體快取解析
+        ResolvedIdentity fastLocal = resolveByNameLocal(input);
+        if (fastLocal != null) {
+            String finalName = overrideName != null ? overrideName : fastLocal.getName();
+            future.complete(new ResolvedIdentity(fastLocal.getUuid(), finalName, fastLocal.getSource()));
+            return future;
+        }
+
+        if (plugin == null) {
+            ResolvedIdentity ext = resolveIdentityFromProviders(input);
+            if (ext != null && overrideName != null) {
+                ext = new ResolvedIdentity(ext.getUuid(), overrideName, ext.getSource());
+            }
+            future.complete(ext);
+            return future;
+        }
+
+        Bukkit.getAsyncScheduler().runNow(plugin, task -> {
+            try {
+                DatabaseStorageManager db = plugin.getDatabaseStorageManager();
+                if (db != null && db.isInitialized()) {
+                    try {
+                        PlayerActivityRecord rec = db.findPlayerActivityByName(input);
+                        if (rec != null && rec.getPlayerUuid() != null && !PlayerManager.isTempUUID(rec.getPlayerUuid())) {
+                            String name = overrideName != null ? overrideName
+                                    : (!rec.getPlayerName().isEmpty() ? rec.getPlayerName() : input);
+                            future.complete(new ResolvedIdentity(rec.getPlayerUuid(), name, "Database"));
+                            return;
+                        }
+                    } catch (SQLException ignored) {
+                    }
+                }
+
+                ResolvedIdentity fromProvider = resolveIdentityFromProviders(input);
+                if (fromProvider != null && fromProvider.getUuid() != null && !PlayerManager.isTempUUID(fromProvider.getUuid())) {
+                    String name = overrideName != null ? overrideName
+                            : (!fromProvider.getName().isEmpty() ? fromProvider.getName() : input);
+                    future.complete(new ResolvedIdentity(fromProvider.getUuid(), name, fromProvider.getSource()));
+                    return;
+                }
+
+                ResolvedIdentity fromLp = lookupViaLuckPerms(input);
+                if (fromLp != null && fromLp.getUuid() != null && !PlayerManager.isTempUUID(fromLp.getUuid())) {
+                    String name = overrideName != null ? overrideName
+                            : (!fromLp.getName().isEmpty() ? fromLp.getName() : input);
+                    future.complete(new ResolvedIdentity(fromLp.getUuid(), name, fromLp.getSource()));
+                    return;
+                }
+
+                future.complete(null);
+            } catch (Throwable ex) {
+                future.completeExceptionally(ex);
+            }
+        });
+        return future;
+    }
+
+    /**
+     * 純 Java 外部來源玩家身分查詢（供單元測試與非同步流程呼叫）。
+     */
+    public ResolvedIdentity resolveIdentityFromProviders(String playerName) {
+        if (playerName == null || playerName.trim().isEmpty()) {
+            return null;
+        }
+        String trimmed = playerName.trim();
+        if (planProvider != null && planProvider.isAvailable()) {
+            try {
+                ResolvedIdentity res = planProvider.lookupIdentityByName(trimmed);
+                if (res != null && res.getUuid() != null) {
+                    return res;
+                }
+            } catch (Throwable ex) {
+                logger.log(Level.FINE, "Plan 名稱查詢失敗 (" + trimmed + "): " + ex.getMessage());
+            }
+        }
+        if (huskSyncProvider != null && huskSyncProvider.isAvailable()) {
+            try {
+                ResolvedIdentity res = huskSyncProvider.lookupIdentityByName(trimmed);
+                if (res != null && res.getUuid() != null) {
+                    return res;
+                }
+            } catch (Throwable ex) {
+                logger.log(Level.FINE, "HuskSync 名稱查詢失敗 (" + trimmed + "): " + ex.getMessage());
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 針對單一玩家（例如剛被手動指定為 Server_Unclaimed 原領地主）檢查是否缺少最後上線時間，若缺少則立即嘗試從 Plan / HuskSync 補齊。
+     */
+    public CompletableFuture<ImportedEntry> importSinglePlayerIfMissingAsync(UUID uuid, String playerName, Source source) {
+        CompletableFuture<ImportedEntry> future = new CompletableFuture<>();
+        if (plugin == null || uuid == null || PlayerManager.isTempUUID(uuid)) {
+            future.complete(null);
+            return future;
+        }
+        long localExisting = plugin.getCrossServerManager() != null
+                ? plugin.getCrossServerManager().resolveEffectiveLastSeen(uuid)
+                : 0L;
+        if (localExisting > 0L) {
+            future.complete(null);
+            return future;
+        }
+
+        Bukkit.getAsyncScheduler().runNow(plugin, task -> {
+            try {
+                DatabaseStorageManager db = plugin.getDatabaseStorageManager();
+                if (db != null && db.isInitialized()) {
+                    PlayerActivityRecord existingRec = db.findPlayerActivityByUuid(uuid);
+                    if (existingRec != null && existingRec.getLastSeen() > 0L) {
+                        if (plugin.getCrossServerManager() != null) {
+                            plugin.getCrossServerManager().updateCachedPlayerActivity(uuid, existingRec.getPlayerName(), existingRec.getLastSeen());
+                        }
+                        future.complete(null);
+                        return;
+                    }
+                }
+
+                List<MissingOwnerTarget> single = Collections.singletonList(
+                        new MissingOwnerTarget(uuid, playerName == null ? "" : playerName, Collections.emptyList()));
+                ImportReport report = resolveFromProviders(single, source == null ? Source.ALL : source, false);
+                if (report.getImported().isEmpty()) {
+                    future.complete(null);
+                    return;
+                }
+                ImportedEntry entry = report.getImported().get(0);
+                String effName = !entry.getPlayerName().isEmpty() ? entry.getPlayerName() : playerName;
+                if (db != null && db.isInitialized()) {
+                    db.upsertPlayerActivity(uuid, effName, entry.getLastSeenMs(), plugin.getStorageServerName());
+                }
+                if (plugin.getCrossServerManager() != null) {
+                    plugin.getCrossServerManager().updateCachedPlayerActivity(uuid, effName, entry.getLastSeenMs());
+                }
+                ResidencePlayer rp = plugin.getPlayerManager().getResidencePlayer(uuid);
+                if (rp != null && rp.getData() != null && entry.getLastSeenMs() > rp.getData().getLastSeen()) {
+                    rp.getData().setLastSeen(entry.getLastSeenMs());
+                    rp.save();
+                }
+                RedisSyncBus bus = plugin.getRedisSyncBus();
+                if (bus != null && bus.isEnabled()) {
+                    bus.publish(RedisSyncBus.TOPIC_RESIDENCE_INDEX, plugin.getStorageServerName());
+                }
+                future.complete(entry);
+            } catch (Throwable ex) {
+                logger.log(Level.FINE, "單一玩家最後上線時間補齊失敗 (" + uuid + "): " + ex.getMessage());
+                future.complete(null);
+            }
+        });
+        return future;
+    }
+
+    private String resolveKnownNameLocal(UUID uuid) {
+        if (plugin == null || uuid == null) {
+            return null;
+        }
+        Player online = Bukkit.getPlayer(uuid);
+        if (online != null) {
+            return online.getName();
+        }
+        String rpName = ResidencePlayer.getName(uuid);
+        if (rpName != null && !rpName.isEmpty()) {
+            return rpName;
+        }
+        if (plugin.getCrossServerManager() != null) {
+            String cached = plugin.getCrossServerManager().getCachedPlayerName(uuid);
+            if (cached != null && !cached.isEmpty()) {
+                return cached;
+            }
+        }
+        if (plugin.getCleanupReclaimManager() != null) {
+            String archivedName = plugin.getCleanupReclaimManager().findOriginalOwnerName(uuid);
+            if (archivedName != null && !archivedName.isEmpty()) {
+                return archivedName;
+            }
+        }
+        OfflinePlayer off = Bukkit.getOfflinePlayer(uuid);
+        if (off != null && off.getName() != null && !off.getName().isEmpty()) {
+            return off.getName();
+        }
+        return null;
+    }
+
+    private String resolveKnownNameAsync(UUID uuid) {
+        DatabaseStorageManager db = plugin != null ? plugin.getDatabaseStorageManager() : null;
+        if (db != null && db.isInitialized()) {
+            try {
+                PlayerActivityRecord rec = db.findPlayerActivityByUuid(uuid);
+                if (rec != null && !rec.getPlayerName().isEmpty()) {
+                    return rec.getPlayerName();
+                }
+            } catch (SQLException ignored) {
+            }
+        }
+        if (planProvider != null && planProvider.isAvailable()) {
+            try {
+                String n = planProvider.lookupNameByUuid(uuid);
+                if (n != null && !n.isEmpty()) {
+                    return n;
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        if (huskSyncProvider != null && huskSyncProvider.isAvailable()) {
+            try {
+                String n = huskSyncProvider.lookupNameByUuid(uuid);
+                if (n != null && !n.isEmpty()) {
+                    return n;
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        return lookupNameViaLuckPerms(uuid);
+    }
+
+    private ResolvedIdentity resolveByNameLocal(String name) {
+        if (plugin == null || name == null || name.isEmpty()) {
+            return null;
+        }
+        Player online = Bukkit.getPlayerExact(name);
+        if (online != null) {
+            return new ResolvedIdentity(online.getUniqueId(), online.getName(), "Online");
+        }
+        ResidencePlayer rp = plugin.getPlayerManager().getResidencePlayer(name);
+        if (rp != null && rp.getUniqueId() != null
+                && !PlayerManager.isTempUUID(rp.getUniqueId())
+                && !rp.getUniqueId().equals(plugin.getServerUUID())) {
+            return new ResolvedIdentity(rp.getUniqueId(), rp.getName() != null ? rp.getName() : name, "Residence");
+        }
+        CrossServerManager csm = plugin.getCrossServerManager();
+        if (csm != null) {
+            UUID cachedUuid = csm.getCachedPlayerUuidByName(name);
+            if (cachedUuid != null && !PlayerManager.isTempUUID(cachedUuid)) {
+                String cachedName = csm.getCachedPlayerName(cachedUuid);
+                return new ResolvedIdentity(cachedUuid, cachedName != null ? cachedName : name, "ActivityCache");
+            }
+        }
+        CleanupReclaimManager reclaim = plugin.getCleanupReclaimManager();
+        if (reclaim != null) {
+            ReclaimEntry archived = reclaim.findOriginalOwnerByName(name);
+            if (archived != null && archived.getOriginalOwnerUuid() != null && !PlayerManager.isTempUUID(archived.getOriginalOwnerUuid())) {
+                return new ResolvedIdentity(archived.getOriginalOwnerUuid(), archived.getOriginalOwnerName(), "CleanupReclaim");
+            }
+        }
+        try {
+            OfflinePlayer cachedOff = Bukkit.getOfflinePlayerIfCached(name);
+            if (cachedOff != null && cachedOff.getUniqueId() != null && !PlayerManager.isTempUUID(cachedOff.getUniqueId())) {
+                return new ResolvedIdentity(cachedOff.getUniqueId(), cachedOff.getName() != null ? cachedOff.getName() : name, "UserCache");
+            }
+        } catch (Throwable ignored) {
+        }
+        return null;
+    }
+
+    private ResolvedIdentity lookupViaLuckPerms(String name) {
+        try {
+            Class<?> lpProvider = Class.forName("net.luckperms.api.LuckPermsProvider");
+            Object lp = lpProvider.getMethod("get").invoke(null);
+            Object userMgr = lp.getClass().getMethod("getUserManager").invoke(lp);
+            Object futObj = userMgr.getClass().getMethod("lookupUniqueId", String.class).invoke(userMgr, name);
+            if (futObj instanceof CompletableFuture<?>) {
+                Object uuidObj = ((CompletableFuture<?>) futObj).get(5, TimeUnit.SECONDS);
+                if (uuidObj instanceof UUID) {
+                    UUID uuid = (UUID) uuidObj;
+                    String canonical = lookupNameViaLuckPerms(uuid);
+                    return new ResolvedIdentity(uuid, canonical != null && !canonical.isEmpty() ? canonical : name, "LuckPerms");
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return null;
+    }
+
+    private String lookupNameViaLuckPerms(UUID uuid) {
+        try {
+            Class<?> lpProvider = Class.forName("net.luckperms.api.LuckPermsProvider");
+            Object lp = lpProvider.getMethod("get").invoke(null);
+            Object userMgr = lp.getClass().getMethod("getUserManager").invoke(lp);
+            Object futObj = userMgr.getClass().getMethod("lookupUsername", UUID.class).invoke(userMgr, uuid);
+            if (futObj instanceof CompletableFuture<?>) {
+                Object nameObj = ((CompletableFuture<?>) futObj).get(5, TimeUnit.SECONDS);
+                if (nameObj instanceof String) {
+                    return (String) nameObj;
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return null;
     }
 
     /**
@@ -303,24 +714,59 @@ public class PlayerActivityImporter {
         Map<UUID, List<String>> resByOwner = new LinkedHashMap<>();
         Map<UUID, String> namesByOwner = new HashMap<>();
         String serverLand = plugin.getServerLandName();
-        String archivedHolder = plugin.getConfigManager().getAutoCleanUserName();
+        CleanupReclaimManager reclaimMgr = plugin.getCleanupReclaimManager();
 
         for (ClaimedResidence res : new ArrayList<>(plugin.getResidenceManager().getResidences().values())) {
             if (res == null || !res.isTopArea()) {
                 continue;
             }
             String ownerName = res.getOwner();
-            if (ownerName != null
+            boolean isArchived = reclaimMgr != null && reclaimMgr.isArchivedHolder(ownerName);
+            if (isArchived) {
+                ReclaimEntry archived = reclaimMgr.getArchivedEntry(res);
+                if (archived != null && archived.getOriginalOwnerUuid() != null
+                        && !PlayerManager.isTempUUID(archived.getOriginalOwnerUuid())) {
+                    String label = res.getName() + "(保管)";
+                    List<String> list = resByOwner.computeIfAbsent(archived.getOriginalOwnerUuid(), k -> new ArrayList<>());
+                    if (!list.contains(label)) {
+                        list.add(label);
+                    }
+                    if (!archived.getOriginalOwnerName().isEmpty()) {
+                        namesByOwner.putIfAbsent(archived.getOriginalOwnerUuid(), archived.getOriginalOwnerName());
+                    }
+                }
+            } else if (ownerName != null
                     && !ownerName.equalsIgnoreCase("server land")
-                    && !ownerName.equalsIgnoreCase(serverLand)
-                    && (archivedHolder == null || !ownerName.equalsIgnoreCase(archivedHolder))) {
+                    && !ownerName.equalsIgnoreCase(serverLand)) {
                 UUID ownerUuid = res.getOwnerUUID();
-                if (ownerUuid != null) {
+                if (ownerUuid != null && !PlayerManager.isTempUUID(ownerUuid) && !ownerUuid.equals(plugin.getServerUUID())) {
                     resByOwner.computeIfAbsent(ownerUuid, k -> new ArrayList<>()).add(res.getName());
                     namesByOwner.putIfAbsent(ownerUuid, ownerName);
                 }
             }
             collectRenterUuids(res, resByOwner, namesByOwner);
+        }
+
+        // 同步納入跨服保管紀錄中的原領地主，讓在任一分流執行 /res cleanup import 都能補齊所有保管領地原領主時間
+        if (reclaimMgr != null) {
+            String localServer = plugin.getStorageServerName();
+            for (ReclaimEntry entry : reclaimMgr.getAllCachedEntries()) {
+                UUID origUuid = entry.getOriginalOwnerUuid();
+                if (origUuid == null || PlayerManager.isTempUUID(origUuid)) {
+                    continue;
+                }
+                boolean isLocal = entry.getServerName() != null && entry.getServerName().equalsIgnoreCase(localServer);
+                String label = isLocal
+                        ? entry.getResName() + "(保管)"
+                        : entry.getServerName() + ":" + entry.getResName() + "(保管)";
+                List<String> list = resByOwner.computeIfAbsent(origUuid, k -> new ArrayList<>());
+                if (!list.contains(label)) {
+                    list.add(label);
+                }
+                if (!entry.getOriginalOwnerName().isEmpty()) {
+                    namesByOwner.putIfAbsent(origUuid, entry.getOriginalOwnerName());
+                }
+            }
         }
 
         Map<UUID, MissingOwnerTarget> out = new LinkedHashMap<>();
@@ -508,6 +954,97 @@ public class PlayerActivityImporter {
                 return 0L;
             }
         }
+
+        @Override
+        public ResolvedIdentity lookupIdentityByName(String playerName) {
+            if (playerName == null || playerName.trim().isEmpty()) {
+                return null;
+            }
+            Object qs = getQueryService();
+            if (qs == null) {
+                return null;
+            }
+            try {
+                Class<?> qsClass = qs.getClass();
+                if (!invokeSchemaCheck(qs, qsClass, "doesDBHaveTable", "plan_users")) {
+                    return null;
+                }
+                Method queryMethod = findQueryMethod(qsClass);
+                if (queryMethod == null) {
+                    return null;
+                }
+                Class<?> funcInterface = queryMethod.getParameterTypes()[1];
+                String sql = "SELECT uuid, name FROM plan_users WHERE LOWER(name) = LOWER(?)";
+                InvocationHandler handler = (proxy, method, args) -> {
+                    if ("toString".equals(method.getName())) {
+                        return "ResidencePlanUserByNameProxy";
+                    }
+                    if (args != null && args.length == 1 && args[0] instanceof PreparedStatement) {
+                        PreparedStatement ps = (PreparedStatement) args[0];
+                        ps.setString(1, playerName.trim());
+                        try (ResultSet rs = ps.executeQuery()) {
+                            if (rs.next()) {
+                                UUID uuid = parseFlexibleUuid(rs.getString(1));
+                                String canonical = rs.getString(2);
+                                if (uuid != null) {
+                                    return new ResolvedIdentity(uuid, canonical != null ? canonical : playerName.trim(), "Plan");
+                                }
+                            }
+                        }
+                    }
+                    return null;
+                };
+                Object proxy = Proxy.newProxyInstance(funcInterface.getClassLoader(), new Class<?>[] { funcInterface }, handler);
+                Object val = queryMethod.invoke(qs, sql, proxy);
+                return val instanceof ResolvedIdentity ? (ResolvedIdentity) val : null;
+            } catch (Throwable ex) {
+                logger.log(Level.FINE, "Plan 名稱查詢失敗 (" + playerName + "): " + ex.getMessage());
+                return null;
+            }
+        }
+
+        @Override
+        public String lookupNameByUuid(UUID uuid) {
+            if (uuid == null) {
+                return null;
+            }
+            Object qs = getQueryService();
+            if (qs == null) {
+                return null;
+            }
+            try {
+                Class<?> qsClass = qs.getClass();
+                if (!invokeSchemaCheck(qs, qsClass, "doesDBHaveTable", "plan_users")) {
+                    return null;
+                }
+                Method queryMethod = findQueryMethod(qsClass);
+                if (queryMethod == null) {
+                    return null;
+                }
+                Class<?> funcInterface = queryMethod.getParameterTypes()[1];
+                String sql = "SELECT name FROM plan_users WHERE uuid = ?";
+                InvocationHandler handler = (proxy, method, args) -> {
+                    if ("toString".equals(method.getName())) {
+                        return "ResidencePlanNameByUuidProxy";
+                    }
+                    if (args != null && args.length == 1 && args[0] instanceof PreparedStatement) {
+                        PreparedStatement ps = (PreparedStatement) args[0];
+                        ps.setString(1, uuid.toString());
+                        try (ResultSet rs = ps.executeQuery()) {
+                            if (rs.next()) {
+                                return rs.getString(1);
+                            }
+                        }
+                    }
+                    return null;
+                };
+                Object proxy = Proxy.newProxyInstance(funcInterface.getClassLoader(), new Class<?>[] { funcInterface }, handler);
+                Object val = queryMethod.invoke(qs, sql, proxy);
+                return val instanceof String ? (String) val : null;
+            } catch (Throwable ignored) {
+                return null;
+            }
+        }
     }
 
     /**
@@ -582,6 +1119,89 @@ public class PlayerActivityImporter {
                 }
             }
             return result;
+        }
+
+        @Override
+        public ResolvedIdentity lookupIdentityByName(String playerName) {
+            if (playerName == null || playerName.trim().isEmpty()) {
+                return null;
+            }
+            Object api = getApi();
+            if (api == null) {
+                return null;
+            }
+            Method getUserByName = findMethod(api.getClass(), "getUser", String.class);
+            if (getUserByName == null) {
+                return null;
+            }
+            try {
+                Object user = unwrapFutureOptional(getUserByName.invoke(api, playerName.trim()));
+                if (user == null) {
+                    return null;
+                }
+                UUID uuid = extractUserUuid(user);
+                if (uuid == null) {
+                    return null;
+                }
+                String name = extractUserName(user);
+                return new ResolvedIdentity(uuid, name != null && !name.isEmpty() ? name : playerName.trim(), "HuskSync");
+            } catch (Throwable ex) {
+                logger.log(Level.FINE, "HuskSync 名稱查詢失敗 (" + playerName + "): " + ex.getMessage());
+                return null;
+            }
+        }
+
+        @Override
+        public String lookupNameByUuid(UUID uuid) {
+            if (uuid == null) {
+                return null;
+            }
+            Object api = getApi();
+            if (api == null) {
+                return null;
+            }
+            Method getUserByUuid = findMethod(api.getClass(), "getUser", UUID.class);
+            if (getUserByUuid == null) {
+                return null;
+            }
+            try {
+                Object user = unwrapFutureOptional(getUserByUuid.invoke(api, uuid));
+                return extractUserName(user);
+            } catch (Throwable ignored) {
+                return null;
+            }
+        }
+
+        private UUID extractUserUuid(Object user) {
+            if (user == null) {
+                return null;
+            }
+            for (String mName : new String[] { "getUuid", "uuid", "getUniqueId" }) {
+                try {
+                    Object val = user.getClass().getMethod(mName).invoke(user);
+                    if (val instanceof UUID) {
+                        return (UUID) val;
+                    }
+                } catch (Throwable ignored) {
+                }
+            }
+            return null;
+        }
+
+        private String extractUserName(Object user) {
+            if (user == null) {
+                return null;
+            }
+            for (String mName : new String[] { "getUsername", "username", "getName", "name" }) {
+                try {
+                    Object val = user.getClass().getMethod(mName).invoke(user);
+                    if (val instanceof String && !((String) val).isEmpty()) {
+                        return (String) val;
+                    }
+                } catch (Throwable ignored) {
+                }
+            }
+            return null;
         }
 
         private Object fetchLatestSnapshot(Object api, Object user) {

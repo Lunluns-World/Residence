@@ -201,10 +201,13 @@ public class LocaleManager {
                 "Language.Residence",
                 "Language.Auction",
                 "Language.Cleanup",
+                "Language.Audit",
                 path + "gui",
                 path + "migrate",
                 path + "auction",
-                path + "cleanup"
+                path + "cleanup",
+                path + "neighbor",
+                path + "co"
         };
         try (InputStream resource = plugin.getResource("Language/" + language + ".yml")) {
             if (resource == null)

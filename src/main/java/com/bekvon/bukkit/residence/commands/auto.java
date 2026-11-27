@@ -14,6 +14,7 @@ import org.bukkit.util.Vector;
 import com.bekvon.bukkit.residence.LocaleManager;
 import com.bekvon.bukkit.residence.Residence;
 import com.bekvon.bukkit.residence.containers.CommandAnnotation;
+import com.bekvon.bukkit.residence.containers.ResAdmin;
 import com.bekvon.bukkit.residence.containers.ResidencePlayer;
 import com.bekvon.bukkit.residence.containers.Visualizer;
 import com.bekvon.bukkit.residence.containers.WorldBorderData;
@@ -90,9 +91,9 @@ public class auto implements cmd {
 
         boolean checkBalance = create.shouldCharge(plugin, rPlayer, resadmin);
         if (plugin.getConfigManager().isARCOldMethod())
-            result = resize(player, cuboid, checkBalance, length);
+            result = resize(player, cuboid, checkBalance, length, resadmin);
         else
-            result = optimizedResize(player, cuboid, checkBalance, length);
+            result = optimizedResize(player, cuboid, checkBalance, length, resadmin);
 
         if (!result.equals(failReason.none)) {
             return true;
@@ -112,12 +113,10 @@ public class auto implements cmd {
             return null;
         }
 
-        if (plugin.getConfigManager().getAntiGreefRangeGaps(cuboid.getWorldName()) > 0) {
+        int gap = plugin.getConfigManager().getAntiGreefRangeGaps(cuboid.getWorldName());
+        if (gap > 0) {
             cuboid = plugin.getSelectionManager().getSelectionCuboid(player);
-            int gap = plugin.getConfigManager().getAntiGreefRangeGaps(cuboid.getWorldName());
-            CuboidArea temp = new CuboidArea(cuboid.getLowLocation().clone().add(-gap, -gap, -gap), cuboid.getHighLocation().clone().add(gap, gap, gap));
-
-            collision = Residence.getInstance().getResidenceManager().collidesWithResidence(temp);
+            collision = Residence.getInstance().getResidenceManager().checkRangeGapCollision(cuboid, null, player, resadmin);
 
             if (collision != null) {
                 Visualizer v = new Visualizer(player);
@@ -228,6 +227,10 @@ public class auto implements cmd {
     }
 
     public static failReason resize(Player player, CuboidArea cuboid, boolean checkBalance, int max) {
+        return resize(player, cuboid, checkBalance, max, ResAdmin.isResAdmin(player));
+    }
+
+    public static failReason resize(Player player, CuboidArea cuboid, boolean checkBalance, int max, boolean resadmin) {
         Residence plugin = Residence.getInstance();
         ResidencePlayer rPlayer = plugin.getPlayerManager().getResidencePlayer(player);
         PermissionGroup group = rPlayer.getGroup();
@@ -314,7 +317,8 @@ public class auto implements cmd {
                 continue;
             }
 
-            if (checkCollision && plugin.getResidenceManager().collidesWithResidence(c) != null) {
+            if (checkCollision && (plugin.getResidenceManager().collidesWithResidence(c) != null
+                    || plugin.getResidenceManager().checkRangeGapCollision(c, null, player, resadmin) != null)) {
                 locked.add(dir);
                 dir = dir.getNext();
                 skipped++;
@@ -380,10 +384,18 @@ public class auto implements cmd {
     }
 
     public static failReason optimizedResize(Player player, CuboidArea cuboid, boolean checkBalance, int max) {
-        return optimizedResize(player, cuboid, checkBalance, new CMIVectorInt3D(max, max, max));
+        return optimizedResize(player, cuboid, checkBalance, new CMIVectorInt3D(max, max, max), ResAdmin.isResAdmin(player));
+    }
+
+    public static failReason optimizedResize(Player player, CuboidArea cuboid, boolean checkBalance, int max, boolean resadmin) {
+        return optimizedResize(player, cuboid, checkBalance, new CMIVectorInt3D(max, max, max), resadmin);
     }
 
     public static failReason optimizedResize(Player player, CuboidArea cuboid, boolean checkBalance, CMIVectorInt3D max) {
+        return optimizedResize(player, cuboid, checkBalance, max, ResAdmin.isResAdmin(player));
+    }
+
+    public static failReason optimizedResize(Player player, CuboidArea cuboid, boolean checkBalance, CMIVectorInt3D max, boolean resadmin) {
 
         Residence plugin = Residence.getInstance();
         ResidencePlayer rPlayer = plugin.getPlayerManager().getResidencePlayer(player);
@@ -491,23 +503,13 @@ public class auto implements cmd {
 
             if (checkCollision) {
 
-                if (gap > 0) {
-                    CuboidArea temp = new CuboidArea(c.getLowLocation().clone().add(-gap, -gap, -gap), c.getHighLocation().clone().add(gap, gap, gap));
-
-                    if (plugin.getResidenceManager().collidesWithResidence(temp) != null) {
-                        smallestRange = (int) -(Math.ceil(Math.abs(smallestRange) / 2D));
-                        cuboid.setLowLocation(c.getLowLocation());
-                        cuboid.setHighLocation(c.getHighLocation());
-                        continue;
-                    }
-
-                } else {
-                    if (plugin.getResidenceManager().collidesWithResidence(c) != null) {
-                        smallestRange = (int) -(Math.ceil(Math.abs(smallestRange) / 2D));
-                        cuboid.setLowLocation(c.getLowLocation());
-                        cuboid.setHighLocation(c.getHighLocation());
-                        continue;
-                    }
+                boolean collides = plugin.getResidenceManager().collidesWithResidence(c) != null
+                        || (gap > 0 && plugin.getResidenceManager().checkRangeGapCollision(c, null, player, resadmin) != null);
+                if (collides) {
+                    smallestRange = (int) -(Math.ceil(Math.abs(smallestRange) / 2D));
+                    cuboid.setLowLocation(c.getLowLocation());
+                    cuboid.setHighLocation(c.getHighLocation());
+                    continue;
                 }
 
                 if (smallestRange == -1) {
@@ -665,13 +667,8 @@ public class auto implements cmd {
             }
 
             if (checkCollision) {
-                boolean collides = false;
-                if (gap > 0) {
-                    CuboidArea temp = new CuboidArea(c.getLowLocation().clone().add(-gap, -gap, -gap), c.getHighLocation().clone().add(gap, gap, gap));
-                    collides = plugin.getResidenceManager().collidesWithResidence(temp) != null;
-                } else {
-                    collides = plugin.getResidenceManager().collidesWithResidence(c) != null;
-                }
+                boolean collides = plugin.getResidenceManager().collidesWithResidence(c) != null
+                        || (gap > 0 && plugin.getResidenceManager().checkRangeGapCollision(c, null, player, resadmin) != null);
                 if (collides) {
                     int newOffset = (int) (Math.abs(offset) / 2D);
                     if (newOffset < 1)

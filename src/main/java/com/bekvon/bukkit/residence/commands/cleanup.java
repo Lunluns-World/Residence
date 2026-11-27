@@ -5,6 +5,7 @@ import java.util.Arrays;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import java.util.UUID;
 
 import org.bukkit.Bukkit;
 import org.bukkit.command.CommandSender;
@@ -15,6 +16,9 @@ import com.bekvon.bukkit.residence.Residence;
 import com.bekvon.bukkit.residence.containers.CommandAnnotation;
 import com.bekvon.bukkit.residence.containers.cmd;
 import com.bekvon.bukkit.residence.containers.lm;
+import com.bekvon.bukkit.residence.protection.ClaimedResidence;
+import com.bekvon.bukkit.residence.protection.PlayerManager;
+import com.bekvon.bukkit.residence.storage.CleanupReclaimManager;
 import com.bekvon.bukkit.residence.utils.PlayerActivityImporter;
 import com.bekvon.bukkit.residence.utils.PlayerActivityImporter.ImportReport;
 import com.bekvon.bukkit.residence.utils.PlayerActivityImporter.ImportedEntry;
@@ -25,23 +29,52 @@ import net.Zrips.CMILib.Colors.CMIChatColor;
 import net.Zrips.CMILib.FileHandler.ConfigReader;
 
 /**
- * 領地自動清理輔助指令：
- * /resadmin cleanup import [all|plan|husksync] [dryrun]
- * 自動掃描名下有領地但缺少最後上線時間的玩家，並從 Plan 與 HuskSync API 補齊至資料庫。
+ * 領地自動清理與保管管理指令：
+ * - /res cleanup import [all|plan|husksync] [dryrun]
+ * - /res cleanup setowner <residence> <player|uuid|clear> [displayName]
+ * - /res cleanup archive <residence> [player|uuid] [displayName]
+ * - /res cleanup clearowner <residence>
  */
 public class cleanup implements cmd {
 
     @Override
-    @CommandAnnotation(simple = false, priority = 960, regVar = { 1, 2, 3 }, consoleVar = { 1, 2, 3 })
+    @CommandAnnotation(simple = false, priority = 960, regVar = { 1, 2, 3, 4 }, consoleVar = { 1, 2, 3, 4 })
     public Boolean perform(Residence plugin, CommandSender sender, String[] args, boolean resadmin) {
-        if (!resadmin) {
+        if (!resadmin && !plugin.getPermissionManager().isResidenceAdmin(sender)) {
             lm.General_AdminOnly.sendMessage(sender);
             return true;
         }
-        if (args.length < 1 || !args[0].equalsIgnoreCase("import")) {
+        if (args.length < 1) {
             return false;
         }
 
+        String sub = args[0].toLowerCase(Locale.ROOT);
+        switch (sub) {
+        case "import":
+            return handleImport(plugin, sender, args);
+        case "setowner":
+        case "originalowner":
+        case "setoriginal":
+            if (args.length < 3) {
+                return false;
+            }
+            return handleSetOriginalOwner(plugin, sender, args[1], args[2], args.length >= 4 ? args[3] : null, false);
+        case "archive":
+            if (args.length < 2) {
+                return false;
+            }
+            return handleArchive(plugin, sender, args[1], args.length >= 3 ? args[2] : null, args.length >= 4 ? args[3] : null);
+        case "clearowner":
+            if (args.length < 2) {
+                return false;
+            }
+            return handleSetOriginalOwner(plugin, sender, args[1], "clear", null, false);
+        default:
+            return false;
+        }
+    }
+
+    private Boolean handleImport(Residence plugin, CommandSender sender, String[] args) {
         if (plugin.getDatabaseStorageManager() == null || !plugin.getDatabaseStorageManager().isInitialized()) {
             lm.Cleanup_Import_DbRequired.sendMessage(sender);
             return true;
@@ -70,6 +103,188 @@ public class cleanup implements cmd {
             sendSync(plugin, sender, formatReport(report, isDry));
         });
         return true;
+    }
+
+    private Boolean handleArchive(Residence plugin, CommandSender sender, String resName, String playerInput, String displayName) {
+        CleanupReclaimManager reclaim = plugin.getCleanupReclaimManager();
+        String holder = reclaim != null ? reclaim.getConfiguredArchivedHolderName() : null;
+        if (holder == null) {
+            lm.Cleanup_HolderNotConfigured.sendMessage(sender);
+            return true;
+        }
+
+        ClaimedResidence res = plugin.getResidenceManager().getByName(resName);
+        if (res == null) {
+            lm.Invalid_Residence.sendMessage(sender);
+            return true;
+        }
+        if (!res.isTopArea()) {
+            lm.Cleanup_TopLevelOnly.sendMessage(sender);
+            return true;
+        }
+
+        if (playerInput == null || playerInput.trim().isEmpty()) {
+            // 若未指定玩家，且目前領地擁有者為一般真實玩家，則自動將目前擁有者記為原領地主並轉入保管
+            UUID curUuid = res.getOwnerUUID();
+            String curName = res.getOwner();
+            boolean isRealOwner = curUuid != null
+                    && !PlayerManager.isTempUUID(curUuid)
+                    && !curUuid.equals(plugin.getServerUUID())
+                    && !reclaim.isArchivedHolder(curName)
+                    && !curName.equalsIgnoreCase("Server Land")
+                    && !curName.equalsIgnoreCase(plugin.getServerLandName());
+            transferToCustodyOnMain(plugin, res, holder);
+            lm.Cleanup_Archive_Success.sendMessage(sender, res.getName(), holder);
+            if (isRealOwner) {
+                reclaim.recordArchived(res, curUuid, curName);
+                lm.Cleanup_SetOwner_Success.sendMessage(sender, res.getName(), curName, curUuid.toString(), "CurrentOwner");
+                notifyOrImportLastSeen(plugin, sender, curUuid, curName);
+            }
+            plugin.saveResidenceDataNow();
+            return true;
+        }
+
+        return handleSetOriginalOwner(plugin, sender, resName, playerInput, displayName, true);
+    }
+
+    public static Boolean handleSetOriginalOwner(
+            Residence plugin,
+            CommandSender sender,
+            String resName,
+            String playerInput,
+            String explicitDisplayName,
+            boolean autoTransferToCustody) {
+        return handleSetOriginalOwner(plugin, sender, resName, playerInput, explicitDisplayName, autoTransferToCustody, null);
+    }
+
+    public static Boolean handleSetOriginalOwner(
+            Residence plugin,
+            CommandSender sender,
+            String resName,
+            String playerInput,
+            String explicitDisplayName,
+            boolean autoTransferToCustody,
+            Runnable afterUpdateOnMain) {
+        CleanupReclaimManager reclaim = plugin.getCleanupReclaimManager();
+        if (reclaim == null) {
+            return true;
+        }
+        String holder = reclaim.getConfiguredArchivedHolderName();
+        if (holder == null) {
+            lm.Cleanup_HolderNotConfigured.sendMessage(sender);
+            return true;
+        }
+
+        ClaimedResidence res = plugin.getResidenceManager().getByName(resName);
+        if (res == null) {
+            lm.Invalid_Residence.sendMessage(sender);
+            return true;
+        }
+        if (!res.isTopArea()) {
+            lm.Cleanup_TopLevelOnly.sendMessage(sender);
+            return true;
+        }
+
+        String trimmedInput = playerInput == null ? "" : playerInput.trim();
+        if (trimmedInput.equalsIgnoreCase("clear")
+                || trimmedInput.equalsIgnoreCase("none")
+                || trimmedInput.equalsIgnoreCase("remove")
+                || trimmedInput.equalsIgnoreCase("unset")) {
+            if (plugin.getAuditManager() != null) {
+                plugin.getAuditManager().captureBeforeMutation(sender, res, com.bekvon.bukkit.residence.audit.AuditAction.OWNER);
+            }
+            reclaim.removeArchivedRecord(res);
+            lm.Cleanup_SetOwner_Cleared.sendMessage(sender, res.getName());
+            if (afterUpdateOnMain != null) {
+                afterUpdateOnMain.run();
+            }
+            return true;
+        }
+
+        if (!autoTransferToCustody && !reclaim.isArchivedHolder(res.getOwner())) {
+            lm.Cleanup_SetOwner_NotArchived.sendMessage(sender, res.getName(), res.getOwner(), holder);
+            return true;
+        }
+
+        lm.Cleanup_SetOwner_Resolving.sendMessage(sender, trimmedInput);
+        UUID targetResUuid = res.getUniqueId();
+        String targetResName = res.getName();
+
+        plugin.getPlayerActivityImporter().resolvePlayerIdentityAsync(trimmedInput, explicitDisplayName)
+                .whenComplete((identity, err) -> runOnMain(plugin, sender, () -> {
+                    if (err != null || identity == null || identity.getUuid() == null) {
+                        lm.Cleanup_SetOwner_PlayerNotFound.sendMessage(sender, trimmedInput);
+                        return;
+                    }
+                    ClaimedResidence live = targetResUuid != null
+                            ? plugin.getResidenceManager().getByUUID(targetResUuid)
+                            : plugin.getResidenceManager().getByName(targetResName);
+                    if (live == null) {
+                        lm.Invalid_Residence.sendMessage(sender);
+                        return;
+                    }
+                    if (!reclaim.isArchivedHolder(live.getOwner())) {
+                        if (autoTransferToCustody) {
+                            transferToCustodyOnMain(plugin, live, holder);
+                            lm.Cleanup_Archive_Success.sendMessage(sender, live.getName(), holder);
+                        } else {
+                            lm.Cleanup_SetOwner_NotArchived.sendMessage(sender, live.getName(), live.getOwner(), holder);
+                            return;
+                        }
+                    }
+
+                    if (plugin.getAuditManager() != null) {
+                        plugin.getAuditManager().captureBeforeMutation(sender, live, com.bekvon.bukkit.residence.audit.AuditAction.OWNER);
+                    }
+                    reclaim.recordArchived(live, identity.getUuid(), identity.getName());
+                    if (autoTransferToCustody) {
+                        plugin.saveResidenceDataNow();
+                    }
+                    lm.Cleanup_SetOwner_Success.sendMessage(
+                            sender,
+                            live.getName(),
+                            identity.getName(),
+                            identity.getUuid().toString(),
+                            identity.getSource());
+
+                    notifyOrImportLastSeen(plugin, sender, identity.getUuid(), identity.getName());
+                    if (afterUpdateOnMain != null) {
+                        afterUpdateOnMain.run();
+                    }
+                }));
+        return true;
+    }
+
+    private static void transferToCustodyOnMain(Residence plugin, ClaimedResidence res, String holder) {
+        boolean resetFlags = !plugin.getConfigManager().isAutoCleanKeepFlags();
+        res.getPermissions().setOwner(holder, resetFlags);
+        if (plugin.getRentManager().isForRent(res)) {
+            plugin.getRentManager().removeRentable(res);
+        }
+        if (plugin.getTransactionManager().isForSale(res)) {
+            plugin.getTransactionManager().removeFromSale(res);
+        }
+        plugin.getSignUtil().updateSignResName(res);
+    }
+
+    private static void notifyOrImportLastSeen(Residence plugin, CommandSender sender, UUID uuid, String playerName) {
+        long existingTs = plugin.getCrossServerManager() != null
+                ? plugin.getCrossServerManager().resolveEffectiveLastSeen(uuid)
+                : 0L;
+        if (existingTs > 0L) {
+            String formatted = plugin.getCrossServerManager().formatLastSeenValue(uuid, true);
+            lm.Cleanup_SetOwner_LastSeenKnown.sendMessage(sender, formatted);
+            return;
+        }
+        plugin.getPlayerActivityImporter().importSinglePlayerIfMissingAsync(uuid, playerName, Source.ALL)
+                .whenComplete((imported, err) -> runOnMain(plugin, sender, () -> {
+                    if (imported != null && imported.getLastSeenMs() > 0L && plugin.getCrossServerManager() != null) {
+                        String formatted = plugin.getCrossServerManager().formatLastSeenValue(uuid, true);
+                        lm.Cleanup_SetOwner_LastSeenImported.sendMessage(sender, imported.getSourceName(), formatted);
+                    } else {
+                        lm.Cleanup_SetOwner_LastSeenMissing.sendMessage(sender);
+                    }
+                }));
     }
 
     private static String formatReport(ImportReport report, boolean dryRun) {
@@ -122,22 +337,33 @@ public class cleanup implements cmd {
         return sb.toString();
     }
 
+    private static void runOnMain(Residence plugin, CommandSender sender, Runnable task) {
+        if (sender instanceof Player) {
+            Player player = (Player) sender;
+            player.getScheduler().run(plugin, t -> {
+                if (player.isOnline()) {
+                    task.run();
+                }
+            }, null);
+        } else {
+            Bukkit.getGlobalRegionScheduler().execute(plugin, task);
+        }
+    }
+
     private static void sendSync(Residence plugin, CommandSender sender, String message) {
         String colored = CMIChatColor.translate(message);
-        if (sender instanceof Player) {
-            ((Player) sender).getScheduler().run(plugin, t -> sender.sendMessage(colored), null);
-        } else {
-            Bukkit.getGlobalRegionScheduler().execute(plugin, () -> sender.sendMessage(colored));
-        }
+        runOnMain(plugin, sender, () -> sender.sendMessage(colored));
     }
 
     @Override
     public void getLocale() {
         ConfigReader c = Residence.getInstance().getLocaleManager().getLocaleConfig();
-        c.get("Description", "Import missing residence owner last-seen timestamps from Plan and HuskSync API.");
+        c.get("Description", "Manage archived residences and import missing owner last-seen timestamps.");
         c.get("Info", Arrays.asList(
-                "&eUsage: &6/resadmin cleanup import [all|plan|husksync] [dryrun]",
-                "&7Automatically scans residence owners missing last-seen timestamps and imports them from Plan / HuskSync."));
-        LocaleManager.addTabCompleteMain(this, "import", "all%%plan%%husksync", "dryrun");
+                "&eUsage: &6/res cleanup import [all|plan|husksync] [dryrun]",
+                "&eUsage: &6/res cleanup setowner <residence> <player|uuid|clear> [displayName]",
+                "&eUsage: &6/res cleanup archive <residence> [player|uuid] [displayName]",
+                "&7Manage Server_Unclaimed original owners and import last-seen timestamps from Plan / HuskSync."));
+        LocaleManager.addTabCompleteMain(this, "import%%setowner%%archive%%clearowner", "[cresidence]%%all%%plan%%husksync", "[playername]%%dryrun");
     }
 }

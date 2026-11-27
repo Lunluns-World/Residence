@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Test;
 import com.bekvon.bukkit.residence.utils.PlayerActivityImporter.ExternalActivityProvider;
 import com.bekvon.bukkit.residence.utils.PlayerActivityImporter.ImportReport;
 import com.bekvon.bukkit.residence.utils.PlayerActivityImporter.MissingOwnerTarget;
+import com.bekvon.bukkit.residence.utils.PlayerActivityImporter.ResolvedIdentity;
 import com.bekvon.bukkit.residence.utils.PlayerActivityImporter.Source;
 
 /**
@@ -108,5 +109,40 @@ class PlayerActivityImporterTest {
         assertFalse(planOnly.isHuskSyncAvailable());
         assertEquals(0, planOnly.getImported().size());
         assertEquals(1, planOnly.getStillUnknown().size());
+    }
+
+    @Test
+    void parsesFlexibleUuidAndResolvesExternalPlayerIdentityByName() {
+        assertEquals(P1, PlayerActivityImporter.parseFlexibleUuid("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1"));
+        assertEquals(P1, PlayerActivityImporter.parseFlexibleUuid("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"));
+        assertNull(PlayerActivityImporter.parseFlexibleUuid("NotAUuid"));
+
+        ExternalActivityProvider planWithoutUser = fakeProvider("Plan", true, Collections.emptyMap());
+        ExternalActivityProvider huskWithUser = new ExternalActivityProvider() {
+            @Override
+            public String getName() { return "HuskSync"; }
+
+            @Override
+            public boolean isAvailable() { return true; }
+
+            @Override
+            public Map<UUID, Long> queryLastSeen(Collection<UUID> uuids) { return Collections.emptyMap(); }
+
+            @Override
+            public ResolvedIdentity lookupIdentityByName(String playerName) {
+                if ("VeteranPlayer".equalsIgnoreCase(playerName)) {
+                    return new ResolvedIdentity(P2, "VeteranPlayer", "HuskSync");
+                }
+                return null;
+            }
+        };
+
+        PlayerActivityImporter importer = new PlayerActivityImporter(
+                null, Logger.getLogger("ImporterTest"), planWithoutUser, huskWithUser);
+        ResolvedIdentity resolved = importer.resolveIdentityFromProviders("veteranplayer");
+        assertNotNull(resolved);
+        assertEquals(P2, resolved.getUuid());
+        assertEquals("VeteranPlayer", resolved.getName());
+        assertEquals("HuskSync", resolved.getSource());
     }
 }

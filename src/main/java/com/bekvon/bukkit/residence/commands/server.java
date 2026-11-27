@@ -31,6 +31,9 @@ public class server implements cmd {
         }
 
         ClaimedResidence res = plugin.getResidenceManager().getByName(args[0]);
+        if (plugin.getCleanupReclaimManager() != null) {
+            plugin.getCleanupReclaimManager().removeArchivedRecord(res);
+        }
         res.getPermissions().setOwner(plugin.getServerLandName(), false);
         lm.Residence_OwnerChange.sendMessage(sender, args[0], plugin.getServerLandName());
         return true;

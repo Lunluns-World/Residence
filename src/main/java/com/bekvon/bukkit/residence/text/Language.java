@@ -124,6 +124,24 @@ public class Language {
         return enlocale.getStringList(key).size() > 0 ? ColorsArray(enlocale.getStringList(key)) : Arrays.asList(missing);
     }
 
+    public List<String> getMessageList(lm lm, Object... variables) {
+        List<String> base = getMessageList(lm);
+        if (variables == null || variables.length == 0)
+            return base;
+        List<String> formatted = new ArrayList<String>(base.size());
+        for (String line : base) {
+            String msg = line;
+            for (int i = 1; i <= variables.length; i++) {
+                String vr = String.valueOf(variables[i - 1]);
+                if (variables[i - 1] instanceof Flags)
+                    vr = ((Flags) variables[i - 1]).getName();
+                msg = msg.replace("%" + i, vr);
+            }
+            formatted.add(CMIChatColor.translate(msg));
+        }
+        return formatted;
+    }
+
     /**
      * Get the message with the correct key
      * 
